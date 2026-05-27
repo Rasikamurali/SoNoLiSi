@@ -1,0 +1,25 @@
+# Build tools for extensions (install first)
+packaging>=23.2
+setuptools>=65.0.0
+wheel>=0.41.0
+ninja>=1.11.1
+cmake>=3.26.0
+
+# Your runtime deps
+numpy>=1.26.0
+pandas>=2.1.0
+torch>=2.2.0
+transformers>=4.44.0
+datasets>=2.19.0
+huggingface-hub>=0.25.0
+tqdm>=4.66.0
+regex>=2023.10.0
+
+# OpenAI and environment management
+openai>=1.0.0
+python-dotenv>=1.0.0
+
+# Google Docs API (for SoNoLiSi_collab_write.py)
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
