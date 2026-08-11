@@ -5,6 +5,8 @@ code/.env
 # Large data directories — store externally
 results/
 figures/
+archive/
+code/analysis/exports/
 
 # Python
 __pycache__/

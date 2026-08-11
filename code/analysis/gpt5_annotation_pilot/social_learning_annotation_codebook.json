@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0",
+  "annotation_fields": {
+    "Human_Speech_Act": {
+      "values": {
+        "Proposal": {
+          "definition": "Agent recommends a contribution level for the current round. A proposal may be explicitly based on previous-round behavior or averages."
+        },
+        "Counterproposal": {
+          "definition": "Agent recommends a contribution level that differs from a contribution level already proposed by another agent in the same current-group discussion."
+        }
+      }
+    },
+    "Human_Reference": {
+      "values": {
+        "Yes": {
+          "definition": "Explicitly invokes prior-round observed contribution behavior, such as previous contributions, group averages, or contribution trends/patterns. A numeric value is not required."
+        },
+        "No": {
+          "definition": "Does not explicitly invoke prior-round observed contribution behavior. Merely mentioning or quoting another agent in the current discussion does not count."
+        }
+      }
+    },
+    "Human_Agreement": {
+      "values": {
+        "Yes": {
+          "definition": "Explicitly endorses another agent's recommendation or position in the current discussion."
+        },
+        "No": {
+          "definition": "Does not explicitly endorse another agent's recommendation or position."
+        },
+        "Mixed/Qualified": {
+          "definition": "Expresses partial endorsement but qualifies, modifies, or departs from the endorsed recommendation."
+        }
+      }
+    },
+    "Human_Directionality": {
+      "values": {
+        "Increase": {
+          "definition": "The alternative recommended contribution is higher than the proposal it challenges."
+        },
+        "Decrease": {
+          "definition": "The alternative recommended contribution is lower than the proposal it challenges."
+        },
+        "Maintain": {
+          "definition": "The proposed contribution value is to be maintained in reference to the referenced contribution."
+        }
+      }
+    }
+  },
+  "coding_examples": [
+    {
+      "labels": [
+        "Proposal",
+        "Reference"
+      ],
+      "text": "Last round our average was around 7, so I think we should contribute 7.",
+      "explanation": "The recommendation is a Proposal; the prior average makes Reference = Yes."
+    },
+    {
+      "labels": [
+        "Counterproposal",
+        "Reference",
+        "Decrease"
+      ],
+      "text": "My previous group averaged around 4, so I think 4 is more realistic.",
+      "context": "Another agent previously proposed 7 in the same current-group discussion.",
+      "explanation": "This is a Counterproposal, Reference = Yes, and Directionality = Decrease."
+    },
+    {
+      "labels": [
+        "Agreement",
+        "No Reference"
+      ],
+      "text": "I agree with Agent 3 that we should contribute 5.",
+      "explanation": "Agreement = Yes; merely citing Agent 3 in the current discussion does not make Reference = Yes."
+    }
+  ]
+}
