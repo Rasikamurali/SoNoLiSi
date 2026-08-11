@@ -20,9 +20,21 @@ Output: exports/discussion_mechanism/manual_conversation_samples/
 """
 
 import os
+import sys
 import glob
 import numpy as np
 import pandas as pd
+
+# Reorg (2026-08-11): see discussion_mechanism_analysis.py for why this block exists.
+_ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+    _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
+for _p in [_ANALYSIS_DIR] + [
+    os.path.join(_ANALYSIS_DIR, d) for d in os.listdir(_ANALYSIS_DIR)
+    if os.path.isdir(os.path.join(_ANALYSIS_DIR, d)) and not d.startswith((".", "__"))
+]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from discussion_talk_vs_behavior import load_messages
 

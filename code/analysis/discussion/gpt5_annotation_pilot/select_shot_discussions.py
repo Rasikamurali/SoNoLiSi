@@ -12,9 +12,19 @@ Prints the chosen discussion_ids (paste into gpt_5_annotation_sl.py's
 SHOT_POOL_DISCUSSION_IDS_STRATIFIED, or pass via --shot-discussion-ids).
 """
 
+import os
+
 import pandas as pd
 
-DATA_PATH = "../exports/human_annotation_stratified_sample/stratified_sample_hand_coded.csv"
+# Reorg (2026-08-11): was a bare "../exports/..." path, which depended on
+# being invoked from exactly this file's directory. Anchored to code/analysis/
+# via __file__ instead so it works regardless of invocation cwd or nesting depth.
+_ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+    _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
+
+DATA_PATH = os.path.join(_ANALYSIS_DIR, "exports", "human_annotation_stratified_sample",
+                          "stratified_sample_hand_coded.csv")
 FIELDS = ["Human_Speech_Act", "Human_Reference", "Human_Agreement", "Human_Directionality"]
 N_SHOTS = 8
 

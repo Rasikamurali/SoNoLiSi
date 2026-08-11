@@ -35,6 +35,12 @@ RESULTS   = "/data3/rasimura/social-norm-evo/results"
 FIG_ROOT  = "/data3/rasimura/social-norm-evo/figures/local"
 CODE_DIR  = os.path.dirname(os.path.abspath(__file__))
 
+# Reorg (2026-08-11): see run_13b_analysis.py for why this block exists.
+ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
+while not os.path.exists(os.path.join(ANALYSIS_DIR, "sobel_mediation.py")):
+    ANALYSIS_DIR = os.path.dirname(ANALYSIS_DIR)
+SCRIPT_SUBFOLDER = {"behavior_quantified.py": "behavioral", "perception_quantified.py": "perception"}
+
 MODELS     = ["gpt", "llama", "mistral", "qwen"]
 MODEL_LABELS = {"gpt": "GPT-4o-mini", "llama": "Llama 3.1-8B",
                 "mistral": "Mistral-7B", "qwen": "Qwen2.5-7B"}
@@ -102,8 +108,12 @@ def run_stability():
     print("STABILITY ANALYSIS — local variant")
     print("=" * 60)
 
-    if CODE_DIR not in sys.path:
-        sys.path.insert(0, CODE_DIR)
+    for _p in [ANALYSIS_DIR] + [
+        os.path.join(ANALYSIS_DIR, d) for d in os.listdir(ANALYSIS_DIR)
+        if os.path.isdir(os.path.join(ANALYSIS_DIR, d)) and not d.startswith((".", "__"))
+    ]:
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
 
     import stability_analysis as sa
 
@@ -532,7 +542,8 @@ def run_stats():
     ]
 
     for script, extra_args in scripts:
-        cmd = [sys.executable, os.path.join(CODE_DIR, script)] + extra_args
+        script_path = os.path.join(ANALYSIS_DIR, SCRIPT_SUBFOLDER.get(script, ""), script)
+        cmd = [sys.executable, script_path] + extra_args
         print(f"\n  Running: {script} {' '.join(extra_args)}")
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:

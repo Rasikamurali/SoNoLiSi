@@ -22,10 +22,21 @@ import sys
 import pandas as pd
 import tiktoken
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # code/analysis/
+# Reorg (2026-08-11): this file moved one directory deeper
+# (code/analysis/gpt5_annotation_pilot/ -> code/analysis/discussion/gpt5_annotation_pilot/).
+# discussion_talk_vs_behavior.py stays at code/analysis/ (shared across
+# themes) -- anchor to it and add every subfolder to sys.path.
+_ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+    _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
+for _p in [_ANALYSIS_DIR] + [
+    os.path.join(_ANALYSIS_DIR, d) for d in os.listdir(_ANALYSIS_DIR)
+    if os.path.isdir(os.path.join(_ANALYSIS_DIR, d)) and not d.startswith((".", "__"))
+]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 from discussion_talk_vs_behavior import load_messages  # noqa: E402
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # gpt5_annotation_pilot/
 from gpt_5_annotation_sl import (  # noqa: E402
     CODEBOOK_PATH, DATA_PATH, SHOT_POOL_DISCUSSION_IDS_STRATIFIED,
     SHOT_CONDITIONS, build_codebook_prompt, build_shots_block,
@@ -62,7 +73,7 @@ def main():
     codebook = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                             os.path.basename(CODEBOOK_PATH))))
     shot_source_df = pd.read_csv(os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        _ANALYSIS_DIR,
         "exports", "human_annotation_stratified_sample", "stratified_sample_hand_coded.csv"))
     pool_df = shot_source_df[shot_source_df.discussion_id.isin(SHOT_POOL_DISCUSSION_IDS_STRATIFIED)]
 

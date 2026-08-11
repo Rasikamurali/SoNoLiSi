@@ -43,6 +43,7 @@ Output directory: exports/discussion_mechanism/
 """
 
 import os
+import sys
 import re
 import json
 import glob
@@ -53,6 +54,21 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+# Reorg (2026-08-11): this file now lives in code/analysis/discussion/, but
+# sobel_mediation.py and discussion_talk_vs_behavior.py stay at code/analysis/
+# (shared across many themes) -- walk up to find them and add every
+# code/analysis/ subfolder to sys.path so bare local imports keep working
+# regardless of which theme folder a module ended up in.
+_ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+    _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
+for _p in [_ANALYSIS_DIR] + [
+    os.path.join(_ANALYSIS_DIR, d) for d in os.listdir(_ANALYSIS_DIR)
+    if os.path.isdir(os.path.join(_ANALYSIS_DIR, d)) and not d.startswith((".", "__"))
+]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from sobel_mediation import MODEL_SPECS
 from discussion_talk_vs_behavior import (

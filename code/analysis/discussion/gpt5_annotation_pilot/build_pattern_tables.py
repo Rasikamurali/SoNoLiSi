@@ -19,10 +19,14 @@ import re
 
 import pandas as pd
 
-RUN_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "exports", "gpt5_annotation_pilot", "full_corpus_run",
-)
+# Reorg (2026-08-11): this file moved one directory deeper
+# (code/analysis/gpt5_annotation_pilot/ -> code/analysis/discussion/gpt5_annotation_pilot/),
+# so anchoring to code/analysis/ needs a 3rd dirname() hop now, not 2.
+_ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+    _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
+
+RUN_DIR = os.path.join(_ANALYSIS_DIR, "exports", "gpt5_annotation_pilot", "full_corpus_run")
 IN_PATH = os.path.join(RUN_DIR, "8_example_discussions_annotated.csv")
 
 ROUND_RE = re.compile(r"_R(\d+)_G\d+$")

@@ -18,9 +18,13 @@ import re
 
 import pandas as pd
 
+# Reorg (2026-08-11): see build_pattern_tables.py for why this anchor exists.
+_ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+    _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
+
 IN_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "exports", "gpt5_annotation_pilot", "full_corpus_run", "8_example_discussions_annotated.csv",
+    _ANALYSIS_DIR, "exports", "gpt5_annotation_pilot", "full_corpus_run", "8_example_discussions_annotated.csv",
 )
 
 ROUND_RE = re.compile(r"_R(\d+)_G\d+$")

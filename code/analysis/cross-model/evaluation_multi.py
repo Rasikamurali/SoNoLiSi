@@ -40,7 +40,15 @@ from nltk.corpus import stopwords
 # ============================================================
 
 CODE_DIR    = os.path.dirname(os.path.abspath(__file__))
-PROJECT_DIR = os.path.dirname(CODE_DIR)
+# Reorg (2026-08-11): this file moved one directory deeper (code/analysis/
+# -> code/analysis/cross-model/), so PROJECT_DIR needs one more dirname()
+# hop to still resolve to the same place it always did (code/, one level
+# above code/analysis/ -- NOT the repo root, despite the name; this was
+# already true before the move, giving RESULTS_DIR=code/results and
+# FIGURES_DIR=code/figures/<date>, which is a different location than the
+# top-level results/figures/ directories most other scripts write to.
+# Preserved as-is rather than "fixed" since original intent is unclear.
+PROJECT_DIR = os.path.dirname(os.path.dirname(CODE_DIR))
 RESULTS_DIR = os.path.join(PROJECT_DIR, "results")
 FIGURES_DIR = os.path.join(PROJECT_DIR, "figures", str(date.today()))
 

@@ -46,10 +46,22 @@ MODEL_NAME = "gpt-5.4-mini"
 # drop it from this set if the API rejects/ignores that assumption.
 FIXED_TEMPERATURE_MODELS = {"gpt-5-mini", "gpt-5-mini-2025-08-01", "gpt-5.4-mini"}
 
-PILOT_DIR = "gpt5_annotation_pilot"
+# Reorg (2026-08-11): PILOT_DIR is a genuine sibling of this file regardless
+# of invocation cwd (gpt5_annotation_pilot/ moved into discussion/ alongside
+# this file), so it stays __file__-anchored to "own directory". OUT_DIR is
+# NOT a sibling of this file anymore (exports/ lives at code/analysis/, one
+# level above discussion/) -- previously a bare "exports/..." coincidentally
+# worked because this file used to live directly in code/analysis/ too, but
+# that's no longer true, so it's anchored explicitly here instead.
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_ANALYSIS_DIR = _THIS_DIR
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+    _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
+
+PILOT_DIR = os.path.join(_THIS_DIR, "gpt5_annotation_pilot")
 CODEBOOK_PATH = os.path.join(PILOT_DIR, "social_learning_annotation_codebook.json")
 DATA_PATH = os.path.join(PILOT_DIR, "GPT_s43_FULL_hand_coded_sample.csv")
-OUT_DIR = os.path.join("exports", "gpt5_annotation_pilot")
+OUT_DIR = os.path.join(_ANALYSIS_DIR, "exports", "gpt5_annotation_pilot")
 
 # Fields scored against ground truth (short names; data columns are
 # Human_<field> / LLM_<field>). "Notes" is requested from the model too,

@@ -1,13 +1,13 @@
 """
-run_13b_analysis.py
+run_70b_analysis.py
 --------------------
-Runs the standard analysis pipeline for the ~13B open-source models
-(Llama 2 13B, Mistral Nemo 12B, Qwen 2.5 14B) using the local variant results.
+Runs the standard analysis pipeline for the 70B models
+(Llama 3.1-70B, Qwen 2.5-72B) — local variant, seeds 42–51.
 
-Mirrors run_local_analysis.py — patches module-level globals in the shared
-analysis scripts rather than duplicating logic.
+Results live in code/results/ (not the main results/ folder);
+RESULTS is patched in each analysis module accordingly.
 
-Output: figures/local/13b_models/
+Output: figures/local/70b_models/
 """
 
 import subprocess
@@ -24,40 +24,43 @@ warnings.filterwarnings("ignore")
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-RESULTS  = "/data3/rasimura/social-norm-evo/results"
-FIG_ROOT = "/data3/rasimura/social-norm-evo/figures/local/13b_models"
+RESULTS  = "/data3/rasimura/social-norm-evo/code/results"
+FIG_ROOT = "/data3/rasimura/social-norm-evo/figures/local/70b_models"
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-MODELS   = ["llama_13b", "mistral_13b", "qwen_14b"]
+# Reorg (2026-08-11): see run_13b_analysis.py for why this block exists.
+ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
+while not os.path.exists(os.path.join(ANALYSIS_DIR, "sobel_mediation.py")):
+    ANALYSIS_DIR = os.path.dirname(ANALYSIS_DIR)
+SCRIPT_SUBFOLDER = {"behavior_quantified.py": "behavioral", "perception_quantified.py": "perception"}
 
-# Used as directory names by analysis scripts (must be path-safe, no spaces)
+MODELS = ["llama_70b", "qwen_72b"]
+
+# Used as directory names by patched analysis scripts (must be path-safe)
 MODEL_LABELS = {
-    "llama_13b":   "llama_13b",
-    "mistral_13b": "mistral_13b",
-    "qwen_14b":    "qwen_14b",
+    "llama_70b": "llama_70b",
+    "qwen_72b":  "qwen_72b",
 }
 
-# Human-readable names for plot titles in custom plots
+# Human-readable names for custom plots
 DISPLAY_LABELS = {
-    "llama_13b":   "Llama 2 13B",
-    "mistral_13b": "Mistral Nemo 12B",
-    "qwen_14b":    "Qwen 2.5 14B",
+    "llama_70b": "Llama 3.1-70B",
+    "qwen_72b":  "Qwen 2.5-72B",
 }
 
-# Colors for the new models
-MODEL_COLORS_13B = {
-    "llama_13b":   "#9467bd",
-    "mistral_13b": "#8c564b",
-    "qwen_14b":    "#e377c2",
+MODEL_COLORS_70B = {
+    "llama_70b": "#17becf",
+    "qwen_72b":  "#bcbd22",
 }
-VARIANT  = "local"
-SEEDS    = list(range(42, 52))   # seeds 42–51 (10 seeds)
 
-CONDITIONS    = ["FULL", "NO_DISCUSSION", "NO_SELECTION", "BASELINE", "PURE_BASELINE"]
+VARIANT = "local"
+SEEDS   = list(range(42, 52))
+
+CONDITIONS      = ["FULL", "NO_DISCUSSION", "NO_SELECTION", "BASELINE", "PURE_BASELINE"]
 PLOT_CONDITIONS = CONDITIONS
-LAST_N        = 5
-ROUNDS        = list(range(1, 21))
-ENDOWMENT     = 10
+LAST_N          = 5
+ROUNDS          = list(range(1, 21))
+ENDOWMENT       = 10
 
 COND_COLORS = {
     "PURE_BASELINE":  "#aaaaaa",
@@ -73,7 +76,6 @@ COND_LABELS = {
     "NO_DISCUSSION":  "No Discussion",
     "FULL":           "Full",
 }
-MODEL_COLORS = MODEL_COLORS_13B
 
 LABEL_SIZE  = 14
 TICK_SIZE   = 12
@@ -82,13 +84,16 @@ LEGEND_SIZE = 11
 os.makedirs(FIG_ROOT, exist_ok=True)
 os.makedirs(os.path.join(FIG_ROOT, "cross_model"), exist_ok=True)
 for m in MODELS:
-    os.makedirs(os.path.join(FIG_ROOT, m, "behavioral_analysis"), exist_ok=True)
-    os.makedirs(os.path.join(FIG_ROOT, m, "selection_analysis"),  exist_ok=True)
-    os.makedirs(os.path.join(FIG_ROOT, m, "alignment_analysis"),  exist_ok=True)
-    os.makedirs(os.path.join(FIG_ROOT, m, "perception_analysis"), exist_ok=True)
+    for sub in ("behavioral_analysis", "selection_analysis",
+                "alignment_analysis", "perception_analysis"):
+        os.makedirs(os.path.join(FIG_ROOT, m, sub), exist_ok=True)
 
-if CODE_DIR not in sys.path:
-    sys.path.insert(0, CODE_DIR)
+for _p in [ANALYSIS_DIR] + [
+    os.path.join(ANALYSIS_DIR, d) for d in os.listdir(ANALYSIS_DIR)
+    if os.path.isdir(os.path.join(ANALYSIS_DIR, d)) and not d.startswith((".", "__"))
+]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 
 # ─── Shared loader ────────────────────────────────────────────────────────────
@@ -112,20 +117,15 @@ def load_latest_log(model, seed, condition):
 
 def check_completeness():
     print("=" * 60)
-    print("COMPLETENESS CHECK — 13B models / local")
+    print("COMPLETENESS CHECK — 70B models / local")
     print("=" * 60)
     all_ok = True
     for model in MODELS:
-        print(f"\n  {MODEL_LABELS[model]}")
+        print(f"\n  {DISPLAY_LABELS[model]}")
         for cond in CONDITIONS:
-            found, missing = [], []
-            for seed in SEEDS:
-                d = load_latest_log(model, seed, cond)
-                if d is not None:
-                    found.append(seed)
-                else:
-                    missing.append(seed)
-            status = "✓" if len(found) == len(SEEDS) else f"✗ {len(found)}/{len(SEEDS)}"
+            found   = [s for s in SEEDS if load_latest_log(model, s, cond) is not None]
+            missing = [s for s in SEEDS if s not in found]
+            status  = "✓" if len(found) == len(SEEDS) else f"✗ {len(found)}/{len(SEEDS)}"
             msg = f"    {cond:20s}: {status}"
             if missing:
                 msg += f"  missing: {missing}"
@@ -144,28 +144,25 @@ def check_completeness():
 
 def run_stability():
     print("=" * 60)
-    print("STABILITY ANALYSIS — 13B models")
+    print("STABILITY ANALYSIS — 70B models")
     print("=" * 60)
-
     import stability_analysis as sa
-    sa.VARIANT     = VARIANT
-    sa.SEEDS       = SEEDS
-    sa.FIG_ROOT    = FIG_ROOT
-    sa.MODELS      = MODELS
+    sa.RESULTS      = RESULTS
+    sa.VARIANT      = VARIANT
+    sa.SEEDS        = SEEDS
+    sa.FIG_ROOT     = FIG_ROOT
+    sa.MODELS       = MODELS
     sa.MODEL_LABELS = MODEL_LABELS
-
     store = sa.build_store()
     for model in MODELS:
         for cond in ["FULL", "BASELINE"]:
-            n = len(store[model].get(cond, {}))
-            print(f"  {MODEL_LABELS[model]} / {cond}: {n} seeds")
-
+            print(f"  {DISPLAY_LABELS[model]} / {cond}: {len(store[model].get(cond, {}))} seeds")
     sa.plot_stability(store)
-    print(f"  Saved: stability_analysis.png/.pdf")
+    print("  Saved: stability_analysis.png/.pdf")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 3. CONTRIBUTION TRAJECTORIES
+# 3. CONTRIBUTION TRAJECTORIES + ALL-MODELS PLOTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def build_contribution_store():
@@ -217,7 +214,8 @@ def plot_contribution_trajectories(store):
                 ax.set_ylabel(DISPLAY_LABELS[model], fontsize=LABEL_SIZE)
             if row == len(MODELS) - 1:
                 ax.set_xlabel("Round", fontsize=TICK_SIZE)
-    fig.suptitle("Mean Contribution Over Rounds — 13B Models (Local)", fontsize=LABEL_SIZE + 2, y=1.01)
+    fig.suptitle("Mean Contribution Over Rounds — 70B Models (Local)",
+                 fontsize=LABEL_SIZE + 2, y=1.01)
     plt.tight_layout()
     out = os.path.join(FIG_ROOT, "cross_model", "contribution_trajectories.pdf")
     fig.savefig(out, bbox_inches="tight")
@@ -227,8 +225,8 @@ def plot_contribution_trajectories(store):
 
 
 def plot_all_models_by_metric(store):
-    def _round_series(data, key):
-        return [np.mean(list(r[key].values())) for r in data["round_logs"]]
+    def _round_series(d, key):
+        return [np.mean(list(r[key].values())) for r in d["round_logs"]]
 
     metric_store = {m: {c: {"contributions": [], "payoffs": []} for c in PLOT_CONDITIONS}
                     for m in MODELS}
@@ -238,22 +236,24 @@ def plot_all_models_by_metric(store):
                 d = load_latest_log(model, seed, cond)
                 if d is None:
                     continue
-                metric_store[model][cond]["contributions"].append(_round_series(d, "contributions"))
-                metric_store[model][cond]["payoffs"].append(_round_series(d, "payoffs"))
+                metric_store[model][cond]["contributions"].append(
+                    _round_series(d, "contributions"))
+                metric_store[model][cond]["payoffs"].append(
+                    _round_series(d, "payoffs"))
 
     for metric, ylabel, ylim, fname in [
-        ("contributions", "Mean Contribution (0–10)", (0, 10.5),   "all_models_contribution.png"),
+        ("contributions", "Mean Contribution (0–10)", (0, 10.5),    "all_models_contribution.png"),
         ("payoffs",       "Mean Payoff",               (None, None), "all_models_payoff.png"),
     ]:
-        fig, axes = plt.subplots(1, len(MODELS), figsize=(4.5 * len(MODELS), 5),
+        fig, axes = plt.subplots(1, len(MODELS), figsize=(5 * len(MODELS), 5),
                                  sharex=True, sharey=True)
         for idx, model in enumerate(MODELS):
             ax = axes[idx]
             for cond in PLOT_CONDITIONS:
-                series_list = metric_store[model][cond][metric]
-                if not series_list:
+                sl = metric_store[model][cond][metric]
+                if not sl:
                     continue
-                arr    = np.array(series_list, dtype=float)
+                arr    = np.array(sl, dtype=float)
                 rounds = np.arange(1, arr.shape[1] + 1)
                 mean   = np.nanmean(arr, axis=0)
                 se     = np.nanstd(arr, axis=0) / np.sqrt(arr.shape[0])
@@ -276,20 +276,20 @@ def plot_all_models_by_metric(store):
                    fontsize=LEGEND_SIZE, frameon=False, bbox_to_anchor=(0.5, -0.04))
         plt.tight_layout(rect=[0, 0.07, 1, 1])
         for ext in ("png", "pdf"):
-            out = os.path.join(FIG_ROOT, fname.replace(".png", f".{ext}"))
-            fig.savefig(out, dpi=150, bbox_inches="tight")
+            fig.savefig(os.path.join(FIG_ROOT, fname.replace(".png", f".{ext}")),
+                        dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"  Saved: {fname}")
 
 
 def run_contribution_plots():
     print("=" * 60)
-    print("CONTRIBUTION TRAJECTORIES — 13B models")
+    print("CONTRIBUTION TRAJECTORIES — 70B models")
     print("=" * 60)
     store = build_contribution_store()
     for model in MODELS:
         for cond in PLOT_CONDITIONS:
-            print(f"  {MODEL_LABELS[model]:18s} / {cond:20s}: {len(store[model][cond])} seeds")
+            print(f"  {DISPLAY_LABELS[model]:16s} / {cond:20s}: {len(store[model][cond])} seeds")
     print()
     plot_contribution_trajectories(store)
     plot_all_models_by_metric(store)
@@ -301,16 +301,15 @@ def run_contribution_plots():
 
 def run_per_seed_plots():
     print("=" * 60)
-    print("PER-SEED BEHAVIORAL PLOTS — 13B models")
+    print("PER-SEED BEHAVIORAL PLOTS — 70B models")
     print("=" * 60)
-
     import temp_evals_behavior as teb
+    teb.RESULTS      = RESULTS
     teb.VARIANTS     = [VARIANT]
     teb.FIG_ROOT     = FIG_ROOT
     teb.SEEDS        = SEEDS
     teb.MODELS       = MODELS
     teb.MODEL_LABELS = MODEL_LABELS
-
     for model in MODELS:
         print(f"  {DISPLAY_LABELS[model]}")
         teb.plot_per_seed(model)
@@ -323,22 +322,19 @@ def run_per_seed_plots():
 
 def run_network_plots():
     print("=" * 60)
-    print("NETWORK DEVELOPMENT — 13B models")
+    print("NETWORK DEVELOPMENT — 70B models")
     print("=" * 60)
-
     import temp_eval_network as ten
-    ten.VARIANT       = VARIANT
-    ten.FIG_ROOT      = FIG_ROOT
-    ten.SEEDS         = SEEDS
-    ten.MODELS        = MODELS
-    ten.MODEL_LABELS  = MODEL_LABELS
-    ten.MODEL_COLORS  = MODEL_COLORS_13B
-
+    ten.RESULTS      = RESULTS
+    ten.VARIANT      = VARIANT
+    ten.FIG_ROOT     = FIG_ROOT
+    ten.SEEDS        = SEEDS
+    ten.MODELS       = MODELS
+    ten.MODEL_LABELS = MODEL_LABELS
+    ten.MODEL_COLORS = MODEL_COLORS_70B
     store = ten.build_store()
     for model in MODELS:
-        n = len(store[model].get("FULL", {}))
-        print(f"  {MODEL_LABELS[model]} / FULL: {n} seeds")
-
+        print(f"  {DISPLAY_LABELS[model]} / FULL: {len(store[model].get('FULL', {}))} seeds")
     ten.plot_per_model(store)
     ten.plot_across_models(store)
     ten.plot_across_models_horizontal(store)
@@ -351,22 +347,19 @@ def run_network_plots():
 
 def run_alignment_plots():
     print("=" * 60)
-    print("PERCEPTION-ACTION GAP — 13B models")
+    print("PERCEPTION-ACTION GAP — 70B models")
     print("=" * 60)
-
     import temp_eval_alignment2 as tea
-    tea.VARIANT       = VARIANT
-    tea.FIG_ROOT      = FIG_ROOT
-    tea.SEEDS         = SEEDS
-    tea.MODELS        = MODELS
-    tea.MODEL_LABELS  = MODEL_LABELS
-    tea.MODEL_COLORS  = MODEL_COLORS_13B
-
+    tea.RESULTS      = RESULTS
+    tea.VARIANT      = VARIANT
+    tea.FIG_ROOT     = FIG_ROOT
+    tea.SEEDS        = SEEDS
+    tea.MODELS       = MODELS
+    tea.MODEL_LABELS = MODEL_LABELS
+    tea.MODEL_COLORS = MODEL_COLORS_70B
     store = tea.build_store()
     for model in MODELS:
-        n = len(store[model].get("FULL", {}))
-        print(f"  {MODEL_LABELS[model]} / FULL: {n} seeds")
-
+        print(f"  {DISPLAY_LABELS[model]} / FULL: {len(store[model].get('FULL', {}))} seeds")
     tea.plot_per_model(store)
     tea.plot_across_models(store)
     print(f"  Saved to {FIG_ROOT}/cross_model/ and per-model alignment_analysis/")
@@ -378,30 +371,66 @@ def run_alignment_plots():
 
 def run_stats():
     print("=" * 60)
-    print("OLS + LME STATS — 13B models")
+    print("OLS + LME STATS — 70B models")
     print("=" * 60)
-
     stats_out = os.path.join(FIG_ROOT, "paper_stats")
     os.makedirs(stats_out, exist_ok=True)
-
     seeds_str = [str(s) for s in SEEDS]
 
+    # behavior_quantified and perception_quantified read from RESULTS via their
+    # own load_latest_log — pass --results-dir so they use code/results
     for script, extra in [
         ("behavior_quantified.py",
-         ["--variant", VARIANT, "--models"] + MODELS + ["--seeds"] + seeds_str + ["--out-dir", stats_out]),
+         ["--variant", VARIANT, "--models"] + MODELS
+         + ["--seeds"] + seeds_str + ["--out-dir", stats_out]),
         ("perception_quantified.py",
-         ["--variant", VARIANT, "--models"] + MODELS + ["--seeds"] + seeds_str + ["--fig-root", FIG_ROOT]),
+         ["--variant", VARIANT, "--models"] + MODELS
+         + ["--seeds"] + seeds_str + ["--fig-root", FIG_ROOT]),
     ]:
-        cmd = [sys.executable, os.path.join(CODE_DIR, script)] + extra
+        script_path = os.path.join(ANALYSIS_DIR, SCRIPT_SUBFOLDER.get(script, ""), script)
+        cmd = [sys.executable, script_path] + extra
         print(f"\n  Running: {script}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Inject RESULTS path via env var so the script's load_latest_log finds code/results
+        env = os.environ.copy()
+        env["SNLS_RESULTS_DIR"] = RESULTS
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if result.returncode != 0:
             print(f"  [WARN] {script} exited with code {result.returncode}")
             if result.stderr:
-                print(result.stderr[-800:])
+                print(result.stderr[-600:])
         else:
             for line in [l for l in result.stdout.splitlines() if l.strip()][-5:]:
                 print(f"    {line}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. SUBSAMPLE STABILITY
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def run_subsample_stability():
+    print("=" * 60)
+    print("SUBSAMPLE STABILITY — 70B models")
+    print("=" * 60)
+    stats_out = os.path.join(FIG_ROOT, "paper_stats")
+    os.makedirs(stats_out, exist_ok=True)
+    seeds_str = [str(s) for s in SEEDS]
+    cmd = (
+        [sys.executable, os.path.join(CODE_DIR, "subsample_stability.py"),
+         "--variant", VARIANT,
+         "--models"] + MODELS
+        + ["--seeds"] + seeds_str
+        + ["--out-dir", stats_out]
+    )
+    env = os.environ.copy()
+    env["SNLS_RESULTS_DIR"] = RESULTS
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        print(f"  [WARN] subsample_stability.py exited with code {result.returncode}")
+        if result.stderr:
+            print(result.stderr[-600:])
+    else:
+        for line in [l for l in result.stdout.splitlines() if l.strip()][-10:]:
+            print(f"  {line}")
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────
@@ -414,4 +443,5 @@ if __name__ == "__main__":
     run_network_plots()
     run_alignment_plots()
     run_stats()
+    run_subsample_stability()
     print(f"\nAll outputs → {FIG_ROOT}")
