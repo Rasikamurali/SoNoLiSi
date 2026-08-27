@@ -275,6 +275,29 @@ Old simulation-engine versions (`SoNoLiSi_v4.py`, `SoNoLiSi_v5_fixed*.py`, `SoNo
 
 ## Next steps not yet done
 
-1. Confirm/archive the 3 orphaned `temp_eval*` files (§5j) — waiting on your call.
-2. Split `code/stability test/` into engines (→ `code/experiments/`) vs. analysis (→ `code/analysis/shock/`), fix its imports, rename the directory.
-3. Consider consolidating the duplicate-variant clusters from §1 into single parameterized scripts.
+1. ~~Confirm/archive the 3 orphaned `temp_eval*` files (§5j).~~ **Done** (2026-08-27 pass): `temp_eval_alignment.py` and `temp_evals_selection.py` removed; superseded by the tier-parametrized consolidation below.
+2. ~~Split `code/stability test/` into engines vs. analysis, fix imports, rename the directory.~~ **Done** (2026-08-27): its 2 still-live files (`new_group_SoNoLiSi_os_local.py`, `new_group_IN_SoNoLiSi_os_local.py`) moved into `code/experiments/`; the rest had already been superseded and were removed; the directory itself is gone.
+3. Consolidating duplicate-variant clusters into single parameterized scripts — **mostly done** via the 2026-08-24 perception/alignment consolidation (see the update note in §0) plus further tier-parametrized (`--tier`) versions of the behavioral/selection scripts, curated into `aaai_code_release/` as the paper's minimal reproducibility subset.
+
+## Data directories: `results/` vs `code/results/`
+
+Both are gitignored (not pushed to GitHub) and hold non-overlapping simulation
+output, not duplicates — confirmed 2026-08-27 (no matching seed/model/variant
+content found in both; `social_selection_feedback_analysis.py`'s own
+`_CANONICAL_SPECS` table hardcodes which path each model tier's data lives
+under, which is the authoritative reference if this is ever unclear).
+
+- **`results/`** (repo root): `gpt` (+ `new_intro` variant) and the 7B/13B
+  baseline `local` seed runs for llama/mistral/qwen, `aggregate/` summary
+  CSVs, and `robustness/` (parameter/prompt/temperature sweeps — read by
+  `code/robustness/*.py` via hardcoded `results/robustness/...` paths).
+- **`code/results/`**: condition-variant runs (`local_groupsizevary`,
+  `local_newgroup`, `local_newgroup_IN`, `local_noexpect`), the bigger model
+  tiers (`llama_70b`, `qwen_72b`, `gpt-5-mini` for the S2 replication), and
+  the noexpect arm for `gpt-4o-mini`.
+
+The split reflects where each simulation batch was run from (the
+`SoNoLiSi_v5_local.py` output path is relative to cwd), not a deliberate
+design choice — but by now several scripts hardcode paths into one or the
+other, so **don't merge them** without updating every script's `RESULTS_DIR`/
+`BASE`/`_CANONICAL_SPECS`-style path first.
