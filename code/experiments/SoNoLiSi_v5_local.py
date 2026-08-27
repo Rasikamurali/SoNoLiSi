@@ -113,7 +113,8 @@ RESULTS_DIR = os.path.join(THIS_DIR, "..", "results")
 
 HF_TOKEN  = os.getenv("HF_TOKEN")
 CACHE_DIR = "/data3/models/hub"
-os.environ.setdefault("HF_TOKEN", HF_TOKEN)
+if HF_TOKEN:
+    os.environ.setdefault("HF_TOKEN", HF_TOKEN)
 
 # Model keys that select the local vLLM backend. Anything passed to
 # --model that is NOT one of these keys is treated as an OpenAI model name.

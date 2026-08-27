@@ -95,7 +95,8 @@ HF_TOKEN    = os.getenv("HF_TOKEN")
 CACHE_DIR   = "/data3/models/hub"
 RESULTS_DIR = "../results"
 
-os.environ.setdefault("HF_TOKEN", HF_TOKEN)
+if HF_TOKEN:
+    os.environ.setdefault("HF_TOKEN", HF_TOKEN)
 
 AVAILABLE_MODELS = {
     "llama":        "meta-llama/Meta-Llama-3.1-8B-Instruct",
