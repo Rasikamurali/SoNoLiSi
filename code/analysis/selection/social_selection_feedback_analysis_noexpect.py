@@ -6,32 +6,20 @@ Per-link test of the feedback chain
     contribution_t -> evaluation_t -> network update_t
     -> selection/exclusion consequences_t+1 -> contribution adjustment_t+1
 
-in the "no social learning" no-expectation arm: SELECTION_ONLY_NO_EXPECT
-(discussion_on=False, selection_on=True, perception_on=False — see
-code/experiments/SoNoLiSi_v5_local_noexpect.py make_config()). This is the
-noexpect analogue of the main paper's NO_DISCUSSION condition (same toggle:
-discussion off, selection on) — the condition where the chain's mechanics are
-cleanest to read because there is no discussion channel muddying the
+The condition here is where the chain's mechanics are cleanest to read because there is no discussion channel muddying the
 evaluation/exclusion signal.
 
 Each link is its own OLS model, standard errors clustered by run
 (run_id = family_seed, one run per model x seed since only one condition is
 in scope). This is a lighter, per-link version of the original
-social_selection_feedback_analysis.py (which pools BASELINE/NO_DISCUSSION/
-NO_SELECTION/FULL into single models with selection_on x discussion_on
+social_selection_feedback_analysis.py (which pools E/E+SS/
+E+SL/E+SL+SS into single models with selection_on x discussion_on
 interaction terms) — that pooled design doesn't apply here because the
 no-expect arm only has one condition with evaluation_on=True and one with
 discussion_on=True; there's nothing to interact against within-arm.
 
-To make a direct comparison with the paper, this script ALSO re-runs the
-identical per-link specification on the matching WITH-EXPECT condition
-(NO_DISCUSSION, same 3 models, same seed range 42-51) so both arms are
-estimated under literally the same formulas -- the paper's own
-social_selection_feedback_analysis.py numbers come from a differently-shaped
-(pooled, interaction) model and are not directly comparable cell-for-cell.
 
 Output: exports/social_selection_feedback_noexpect/
-See code/analysis/MAIN_PAPER_RESULTS_NOEXPECT.md for how this fits the paper.
 """
 
 import os
@@ -45,7 +33,14 @@ import statsmodels.formula.api as smf
 
 warnings.filterwarnings("ignore")
 
-OUT_DIR = "exports/social_selection_feedback_noexpect"
+# Walk up from this file to code/analysis/ (marked by model_specs.py), same
+# anchor used by every other script here -- OUT_DIR must land at the flat
+# code/analysis/exports/ root regardless of which theme subfolder this file
+# is in, matching what MAIN_PAPER_RESULTS_NOEXPECT.md documents.
+_ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
+    _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
+OUT_DIR = os.path.join(_ANALYSIS_DIR, "exports", "social_selection_feedback_noexpect")
 
 MODELS = [("llama", "Llama-7B"), ("mistral", "Mistral-7B"), ("qwen", "Qwen-7B")]
 SEEDS = list(range(42, 52))   # matched across both arms
@@ -57,7 +52,7 @@ PARTICIPATION_THRESHOLD = 0.3
 ARMS = {
     "noexpect": {
         "label": "SELECTION_ONLY_NO_EXPECT (no social learning, no expectations)",
-        "results_dir": "/data3/rasimura/social-norm-evo/code/results",
+        "results_dir": f"{BASE}/code/results",
         "variant": "local_noexpect",
         "condition": "SELECTION_ONLY_NO_EXPECT",
         "discussion_on": False,
@@ -65,7 +60,7 @@ ARMS = {
     },
     "expect": {
         "label": "NO_DISCUSSION (matched with-expectation condition, main paper)",
-        "results_dir": "/data3/rasimura/social-norm-evo/results",
+        "results_dir": f"{BASE}/results",
         "variant": "local",
         "condition": "NO_DISCUSSION",
         "discussion_on": False,

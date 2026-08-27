@@ -52,11 +52,10 @@ for _p in [_ANALYSIS_DIR] + [
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-BASE = "/data3/rasimura/social-norm-evo"
-_STRUCTURAL_DIR = f"{BASE}/figures/SUPPLEMENTARY_RESULTS/5_community_group_mcpr/community_group_robusntess"
-if _STRUCTURAL_DIR not in sys.path:
-    sys.path.insert(0, _STRUCTURAL_DIR)
+BASE = os.path.dirname(os.path.dirname(_ANALYSIS_DIR))
 
+# analyze_structural_robustness.py now lives in behavioral/, already on
+# sys.path via the anchor-walk above.
 import analyze_structural_robustness as asr  # noqa: E402
 from gap_based_alignment import (  # noqa: E402
     COMMUNITY_SOURCES, GROUP_N12_SOURCES, GROUP_N16_SOURCES, load_latest_logs_for_seed,

@@ -1,53 +1,22 @@
 """
 behavior_quantified_noexpect.py
 --------------------------------
-OLS with seed-clustered SEs for behavioral outcomes (contribution) in the
-NO_EXPECT (perception_on=False) arm of the simulation.
+Same test as behavior_quantified.py's Q1, run on the no-expectations
+ablation arm (perception/expectation formation off, isolating discussion
+and selection). Same formula/Wald machinery, so results are comparable.
 
-Mirrors behavior_quantified.py's Q1 methodology EXACTLY (same formula shape,
-same Wald-contrast machinery, same Bonferroni correction) so results are
-directly comparable to the main-paper Q1 tables. Differences from the main
-script are only in scope, forced by what the noexpect arm actually contains:
+4 conditions (all off / discussion-only / selection-only / both on), all
+C(4,2)=6 pairs compared, Bonferroni over 6. PURE_BASELINE is pulled from
+the main dataset (identical once perception is off), not re-run.
 
-  - 4 models (gpt, llama, mistral, qwen). GPT-4o-mini noexpect data lives
-    under code/results/gpt-4o-mini/local_noexpect/ (added 2026-08-15) —
-    note the directory is "gpt-4o-mini", not "gpt", unlike the other three
-    models; see MODEL_DIR below. GPT also uses a different seed range
-    (43-52) than llama/mistral/qwen (42-51) — same off-by-one quirk as the
-    main local-variant with-expect dataset (results/gpt/local/ also starts
-    at seed43, not seed42); see MODEL_SEEDS below.
-  - 4 conditions: PURE_BASELINE plus 3 noexpect conditions, no BASELINE
-    analogue:
-        PURE_BASELINE              (discussion off, selection off, perception off) — true zero-mechanism reference
-        DISCUSSION_ONLY_NO_EXPECT  (discussion on,  selection off) — "no selection"
-        SELECTION_ONLY_NO_EXPECT   (discussion off, selection on)  — "no social learning"
-        FULL_NO_EXPECT             (discussion on,  selection on)
-    PURE_BASELINE is pulled from the main with-expect dataset
-    (results/{model}/local/, using "gpt" there — the with-expect and
-    noexpect datasets use different directory names for the same model;
-    see PB_MODEL_DIR vs. MODEL_DIR), NOT from local_noexpect/ — there is no
-    noexpect-arm PURE_BASELINE run because it isn't needed: PURE_BASELINE
-    already has perception_on=False (see make_config() in
-    SoNoLiSi_v5_local_noexpect.py), so it's mechanically identical to what a
-    "PURE_BASELINE_NO_EXPECT" would be. Matched to each model's own seed
-    range (see MODEL_SEEDS) as the noexpect conditions for a balanced
-    within-model design.
-    (Plain BASELINE has no noexpect analogue for the same underlying reason
-    — perception/expectation formation is mechanically gated by
-    discussion_on, so with discussion off there is nothing for perception_on
-    to toggle — but BASELINE isn't included here since PURE_BASELINE is the
-    more informative zero-mechanism reference point and the task only asked
-    to add "pure baseline".)
-  - "Compare each pair" = all C(4,2) = 6 pairs (no directional PAPER_PAIRS
-    subset), Bonferroni over n=6.
-  - metric: contribution only (task scope).
+Data quirks: GPT's no-expect data is under folder "gpt-4o-mini" (MODEL_DIR);
+its seed range (43-52) differs by one from llama/mistral/qwen's (42-51,
+MODEL_SEEDS).
 
-Sign convention (matches behavior_quantified.py, flipped 2026-08-17): for
-pair "A -> B", diff = coef(B) - coef(A), so positive means the second-listed
-condition is higher.
-
-Output: figures/2026-03-22/paper_stats/noexpect/
-See code/analysis/MAIN_PAPER_RESULTS_NOEXPECT.md for how this fits the paper.
+Inputs: code/results/{model}/local_noexpect/seed{N}/log_*.json (+
+results/{model}/local/seed{N}/log_*.json for PURE_BASELINE).
+Outputs (figures/2026-03-22/paper_stats/noexpect/): q1_all_rounds/
+q1_final5r_contribution.csv + matching .tex tables.
 """
 
 import os
@@ -63,12 +32,16 @@ import glob
 warnings.filterwarnings("ignore")
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-RESULTS    = "/data3/rasimura/social-norm-evo/code/results"
-OUT_DIR    = "/data3/rasimura/social-norm-evo/figures/2026-03-22/paper_stats/noexpect"
+# BASE is the root of this release, computed from this file's own location
+# (three levels up from code/analysis/behavioral/) so paths below still work
+# if the release is moved or copied elsewhere.
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+RESULTS    = f"{BASE}/code/results"
+OUT_DIR    = f"{BASE}/figures/2026-03-22/paper_stats/noexpect"
 
 # PURE_BASELINE lives in the main-paper "local" (with-expect) dataset — see
 # module docstring for why that's still the correct zero-mechanism reference.
-PB_RESULTS = "/data3/rasimura/social-norm-evo/results"
+PB_RESULTS = f"{BASE}/results"
 PB_VARIANT = "local"
 PB_COND    = "PURE_BASELINE"
 
@@ -99,6 +72,8 @@ PAPER_PAIRS = list(combinations(CONDITIONS, 2))   # all 6 pairs
 # ─── Data loading ─────────────────────────────────────────────────────────────
 
 def load_latest_log(results_dir, variant, model, seed, condition):
+    # Finds and loads the log file for one (model, seed, condition)
+    # combination. If more than one file matches, the last one found wins.
     pattern = os.path.join(results_dir, model, variant, f"seed{seed}", "log_*.json")
     best = {}
     for p in sorted(glob.glob(pattern)):
@@ -113,6 +88,10 @@ def load_latest_log(results_dir, variant, model, seed, condition):
 
 def build_dataframe():
     """Long-format DataFrame: one row per (model, condition, seed, round, agent)."""
+    # Loads the 3 no-expectations conditions from their own dataset, then
+    # separately loads PURE_BASELINE from the main with-expectation dataset
+    # (see module docstring for why PURE_BASELINE doesn't need its own
+    # no-expectations run) and appends it onto the same table.
     rows = []
     for model in MODELS:
         for seed in MODEL_SEEDS[model]:
@@ -151,6 +130,8 @@ def build_dataframe():
 # ─── OLS + Wald helpers (identical to behavior_quantified.py) ────────────────
 
 def fit_ols(df, formula, cluster_col="seed"):
+    # Fits the regression and returns None (with a warning) instead of
+    # raising, so one failed fit doesn't stop the whole script.
     try:
         return smf.ols(formula, data=df).fit(
             cov_type="cluster", cov_kwds={"groups": df[cluster_col]}
@@ -161,6 +142,8 @@ def fit_ols(df, formula, cluster_col="seed"):
 
 
 def wald_contrast(result, key_a, key_b):
+    # Computes coef(key_a) - coef(key_b) and its standard error/p-value.
+    # A missing key is treated as the reference level (coefficient 0).
     params = result.params
     cov    = result.cov_params()
 
@@ -169,6 +152,7 @@ def wald_contrast(result, key_a, key_b):
     def _cv(a, b):
         return cov.loc[a, b] if a and b and a in cov.index and b in cov.columns else 0.0
 
+    # Var(A-B) = Var(A) + Var(B) - 2*Cov(A,B).
     diff = _c(key_a) - _c(key_b)
     se   = np.sqrt(_v(key_a) + _v(key_b) - 2 * _cv(key_a, key_b))
     z    = diff / se if se > 0 else np.nan
@@ -177,18 +161,19 @@ def wald_contrast(result, key_a, key_b):
 
 
 def cond_param(cond, ref=REF_COND):
+    # Statsmodels' coefficient name for one condition dummy variable
+    # (None for the reference condition, which has no dummy of its own).
     return None if cond == ref else f"C(condition, Treatment('{ref}'))[T.{cond}]"
 
 
 # ─── Q1: Within-model condition contrasts ─────────────────────────────────────
 
 def run_q1(df, last_n=None):
-    """
-    Per model: OLS with seed-clustered SEs.
-    All rounds:    contribution ~ C(condition) + round
-    Final n:       contribution ~ C(condition)            (steady state)
-    Returns DataFrame with one row per (model, pair).
-    """
+    """Per model, seed-clustered OLS: + round (all rounds) or without it
+    (final last_n, steady state). One row per (model, pair)."""
+    # If last_n is given, restrict to the final last_n rounds and drop
+    # "round" from the formula (a steady-state view); otherwise use every
+    # round with "round" included as a linear covariate.
     if last_n:
         dfw     = df[df["round"] > df["round"].max() - last_n].copy()
         formula = f"contribution ~ C(condition, Treatment('{REF_COND}'))"
@@ -196,6 +181,8 @@ def run_q1(df, last_n=None):
         dfw     = df.copy()
         formula = f"contribution ~ C(condition, Treatment('{REF_COND}')) + round"
 
+    # Fit one regression per model, then read off all 6 pairwise contrasts
+    # from that one fitted model.
     rows = []
     for model in MODELS:
         mdf    = dfw[dfw["model"] == model].copy()
@@ -243,10 +230,13 @@ CAPTION_NOTE = (r"Cells show $\hat{\beta}$ (SE) for the second-listed condition 
 
 
 def _cell(diff, se, sig):
+    # Formats one table cell as "estimate (standard error)" plus significance stars.
     return f"{diff:.2f} ({se:.2f}){SIG_TEX[sig]}"
 
 
 def make_q1_latex(q1_df, suffix=""):
+    # Builds and writes the LaTeX table: one row per condition pair, one
+    # column per model.
     col_spec = "l" + "r" * len(MODELS)
     header   = " & ".join(MODEL_TEX[m] for m in MODELS)
     lines = [
@@ -277,6 +267,7 @@ def make_q1_latex(q1_df, suffix=""):
 
 
 def save_csv(df, path):
+    # Writes a DataFrame to CSV, creating the destination folder if needed.
     os.makedirs(os.path.dirname(path), exist_ok=True)
     df.to_csv(path, index=False)
     print(f"  Saved → {path}")

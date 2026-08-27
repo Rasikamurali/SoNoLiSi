@@ -1,27 +1,20 @@
 """
 perception_consensus.py
 ------------------------
-Item (a) of the perception/alignment consolidation (2026-08-24): cross-agent
-consensus (SD) of injunctive/descriptive norm perceptions, two panels:
+Cross-agent consensus (SD) of injunctive/descriptive norm perceptions, two
+panels:
 
   Panel 1 (early-vs-late OLS): SD ~ C(period, Treatment('early')), fit per
       family and pooled across the tier's families, Holm-corrected across
       the 4 conditions. Early = rounds 1-3, Late = last 3 rounds per run.
-      Ported from temp_eval_perception.py's _per_family_ols +
-      perception_consensus_avg7b.py's pooled_ols.
   Panel 2 (continuous slope + final-round level): per-seed OLS slope of
       SD ~ round (centered), plus mean SD over the final 5 rounds, plus a
       mixed-effects (random intercept per seed) robustness check on the
-      slope. Ported from stability_analysis.py.
+      slope.
 
 Both panels use the same underlying metric: contrib_sd / in_sd / dn_sd =
 cross-agent SD per round per seed (>=2 valid values required). Lower SD =
 faster/stronger consensus toward the shared norm.
-
-Supersedes temp_eval_perception.py, perception_consensus_avg7b.py,
-perception_consensus_combined_small_with_avg.py, perception_consensus_combined_s2.py,
-and code/analysis/cross-model/stability_analysis.py (all archived to
-code/analysis/archive/{perception,cross-model}/).
 
 Tiers (--tier flag, default 7b): 7b / s2 / pooled (family-based, same
 family lists as gap_based_alignment.py) and community / group (new -- same
@@ -66,7 +59,10 @@ from gap_based_alignment import TIER_SPECS, STRUCTURAL_SETTINGS  # noqa: E402
 
 warnings.filterwarnings("ignore")
 
-BASE = "/data3/rasimura/social-norm-evo"
+# BASE is the root of this release, computed from this file's own location
+# (three levels up from code/analysis/perception/) so paths below still work
+# if the release is moved or copied elsewhere.
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 CONDITIONS = ["BASELINE", "NO_SELECTION", "NO_DISCUSSION", "FULL"]
 COND_LABEL = {"BASELINE": "Baseline", "NO_SELECTION": "No Selection",
              "NO_DISCUSSION": "No Discussion", "FULL": "Full"}
@@ -310,8 +306,10 @@ def per_seed_slope(df, family, cond, metric):
         if len(g) < 3:
             continue
         x = g["round"].values.astype(float)
-        x = x - x.mean()
+        x = x - x.mean()  # center round so the closed-form OLS slope below applies
         y = g[metric].values
+        # Closed-form single-predictor OLS slope: sum(x*y) / sum(x^2), equivalent
+        # to fitting "metric ~ round" per seed without pulling in statsmodels.
         slopes.append(float(np.dot(x, y) / np.dot(x, x)))
     return np.array(slopes)
 
@@ -446,8 +444,7 @@ METRIC_LABELS_PLOT = {"contrib_sd": "Contribution SD", "in_sd": "IN SD", "dn_sd"
 
 def plot_convergence(df, family_order, out_dir):
     """len(family_order) rows x len(CONDITIONS) cols. Each subplot: contrib/IN/DN
-    SD trajectories (mean +/- SE across seeds). Ported from stability_analysis.py's
-    plot_stability, generalized from a fixed 4-model grid to the tier's family list."""
+    SD trajectories (mean +/- SE across seeds)."""
     rounds = np.array(sorted(df["round"].unique()))
     fig, axes = plt.subplots(len(family_order), len(CONDITIONS),
                              figsize=(4 * len(CONDITIONS), 4 * len(family_order)),

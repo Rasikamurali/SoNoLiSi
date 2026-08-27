@@ -8,16 +8,6 @@ public-goods simulation:
     -> lower network weight_t -> altered selection/exclusion_t+1
     -> contribution adjustment_t+1
 
-See exports/social_selection_feedback/mechanism_audit.md for the full
-source-code audit this script is built on (read first; several details
-below only make sense with that context - in particular: evaluation_on is
-perfectly confounded with selection_on across the 4 canonical conditions,
-network weight is updated by TWO separate mechanical channels each round
-(evaluation scores AND stated partner preferences), agents never see their
-own received evaluation scores or network weight in any prompt, and
-"group-seed" is a form_groups() concept unrelated to the numeric experiment
-seed).
-
 Canonical scope: same as every other script in code/analysis/ - MODEL_SPECS
 from model_specs.py (9 families, local variant, canonical seed lists),
 deduped to the last-timestamped log file per (model, seed, condition).
@@ -40,7 +30,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# Reorg (2026-08-11): see selection/build_agent_round_panel.py for why this block exists.
+# Walk up from this file to find model_specs.py (shared across every theme
+# folder), then add every code/analysis/ subfolder to sys.path so bare local
+# imports keep working regardless of which theme folder a module lives in.
 _ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
 while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
     _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
@@ -53,20 +45,23 @@ for _p in [_ANALYSIS_DIR] + [
 
 from model_specs import MODEL_SPECS
 
-# 2026-08-24: tier registry for --tier (a: 7b main, b: s2 supplementary,
-# c: community/group/mcpr structural robustness).
+# Tier registry for --tier (7b: main, s2: supplementary,
+# community/group: structural robustness).
 #
-# Deliberately NOT built from _ms.MODEL_SPECS: the selection_mechanism_*.py
-# wrapper scripts do `import model_specs as sm; sm.MODEL_SPECS = [...narrowed...]`
-# BEFORE importing this module (their own docstrings explain why -- that
-# mutation must land before this module's own `from model_specs import
-# MODEL_SPECS` below). Since sm/_ms are the same cached module object,
-# reading _ms.MODEL_SPECS here would silently pick up whatever narrowed
-# list a wrapper already installed instead of the full 10-family registry
-# -- exactly the KeyError this comment is warning future-you away from
-# reintroducing. This is a hardcoded, self-contained copy of
-# model_specs.py's canonical MODEL_SPECS content instead.
-BASE = "/data3/rasimura/social-norm-evo"
+# Deliberately NOT built from the imported MODEL_SPECS above: callers such
+# as analyze_structural_robustness.py's community_mechanism() reuse this
+# module's step5_analysis() by monkey-patching `social_selection_feedback_
+# analysis.MODEL_SPECS` to a narrowed per-N model list before calling it.
+# Since the imported `MODEL_SPECS` name and this module's own attribute are
+# the same cached binding, reading it here for the tier registry would
+# silently pick up whatever narrowed list a caller already installed
+# instead of the full 10-family registry. This is a hardcoded,
+# self-contained copy of model_specs.py's canonical MODEL_SPECS content
+# instead, so the tier registry is unaffected by monkey-patching.
+# BASE is the root of this release, computed from this file's own location
+# (three levels up from code/analysis/selection/) so paths below still work
+# if the release is moved or copied elsewhere.
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 _CANONICAL_SPECS = [
     ("gpt",         "GPT",         f"{BASE}/results",      "local", list(range(43, 53))),
     ("llama",       "Llama-7B",    f"{BASE}/results",      "local", list(range(43, 53))),
@@ -130,7 +125,7 @@ STRUCTURAL_TIER_SPECS = {
 }
 STRUCTURAL_PUBLISH_ROOT = f"{BASE}/figures/SUPPLEMENTARY_RESULTS/5_community_group_mcpr"
 
-# 2026-08-18: canonical scope for this main table is the small/7B tier only
+# Canonical scope for this main table is the small/7B tier only
 # (gpt-4o-mini, Llama-7B, Mistral-7B, Qwen-7B), their original 10 seeds.
 # model_specs.py's MODEL_SPECS also carries the 13B/70B tiers and GPT-5-mini
 # (added for the S2 supplementary replication) - excluded here so this
@@ -138,27 +133,28 @@ STRUCTURAL_PUBLISH_ROOT = f"{BASE}/figures/SUPPLEMENTARY_RESULTS/5_community_gro
 # model_specs.py is extended for other work.
 #
 # Only apply this pin when MODEL_SPECS actually contains small-tier entries.
-# Orchestrators that pre-restrict model_specs.MODEL_SPECS to a disjoint
-# subset before importing this module (e.g. the 13B/70B/S2 selection_
-# mechanism_*.py runners) must not be silently narrowed to nothing --
-# that's exactly what happened to
-# selection_mechanism_gpt5mini_llama70b_mistral13b_qwen72b.py, whose
-# GPT-5-mini/Llama-70B/Mistral-13B/Qwen-72B keys don't intersect
-# ("gpt","llama","mistral","qwen") at all, so an unconditional filter here
-# zeroed out its MODEL_SPECS and crashed load_canonical_runs() downstream.
+# A caller that pre-restricts MODEL_SPECS to a disjoint subset (e.g. a
+# 13B/70B/S2-only model list, whose keys don't intersect
+# ("gpt","llama","mistral","qwen") at all) must not be silently narrowed to
+# nothing here -- an unconditional filter would zero out MODEL_SPECS and
+# crash load_canonical_runs() downstream.
 _SMALL_KEYS = ("gpt", "llama", "mistral", "qwen")
 if any(spec[0] in _SMALL_KEYS for spec in MODEL_SPECS):
     MODEL_SPECS = [spec for spec in MODEL_SPECS if spec[0] in _SMALL_KEYS]
 
 warnings.filterwarnings("ignore")
 
-OUT_DIR = "exports/social_selection_feedback"
+# Anchored to this file's own location (not cwd) so this resolves correctly
+# regardless of the caller's working directory.
+OUT_DIR = os.path.join(_ANALYSIS_DIR, "exports", "social_selection_feedback")
 CANONICAL_CONDITIONS = ["BASELINE", "NO_DISCUSSION", "NO_SELECTION", "FULL"]
-EVAL_CONDITIONS = {"FULL", "NO_DISCUSSION"}   # evaluation_on == selection_on, see audit
+EVAL_CONDITIONS = {"FULL", "NO_DISCUSSION"}   # evaluation_on == selection_on (see module docstring)
 GROUP_SIZE = 4
 # Reference level for the family fixed effect in step5/step8's OLS formulas.
 # Must be a family actually present in MODEL_SPECS when this module is used
-# with a restricted MODEL_SPECS (e.g. selection_mechanism_llama_mistral_qwen.py).
+# with a restricted MODEL_SPECS (e.g. by configure_tier() below, or by a
+# caller that monkey-patches MODEL_SPECS before calling this module's
+# functions directly, as analyze_structural_robustness.py does).
 REF_FAMILY = "GPT"
 N_AGENTS = 12
 PARTICIPATION_THRESHOLD = 0.3
@@ -451,12 +447,17 @@ def step5_analysis(agent_df):
         })
     desc = pd.DataFrame(desc_rows)
 
+    # m1: pooled OLS with condition/family/round FE -- the headline coefficient
+    # reused by analyze_structural_robustness.py's community_mechanism().
     reg_d = d.dropna(subset=["mean_evaluation_received", "undercontribution"]).copy()
     formula = ('mean_evaluation_received ~ undercontribution '
               '+ C(condition, Treatment(reference="NO_DISCUSSION")) '
               '+ C(family, Treatment(reference=REF_FAMILY)) + C(round, Treatment(reference=1))')
     m1 = smf.ols(formula, data=reg_d).fit(cov_type="cluster", cov_kwds={"groups": reg_d["run_id"]})
 
+    # m2: group-round demeaned robustness check -- subtracts each (group, round)
+    # cell's own mean before regressing, so the estimate compares agents to their
+    # actual co-evaluators in that round rather than to the full pooled sample.
     reg_d["run_agent_id"] = reg_d["run_id"] + "_" + reg_d["agent_id"].astype(str)
     reg_d["group_round_id"] = reg_d["run_id"] + "_" + reg_d["round"].astype(str) + "_" + reg_d["group_id"].astype(str)
     for col in ["mean_evaluation_received", "undercontribution"]:
@@ -1115,8 +1116,8 @@ def write_summary(step5_reg, step3_reg, step8_corrections, step8_reg, desc8, ste
         "# Social selection feedback: summary",
         "",
         "## Method note",
-        "Built link by link from raw simulation logs and mechanism_audit.md (read the audit first). "
-        "IMPORTANT CAVEAT discovered during the audit: `evaluation_on` is perfectly confounded with "
+        "Built link by link from raw simulation logs. "
+        "IMPORTANT CAVEAT: `evaluation_on` is perfectly confounded with "
         "`selection_on` in this experimental design (True only in FULL and NO_DISCUSSION) - there is no "
         "condition with evaluation active and grouping random, so the evaluation->weight link (Steps "
         "2-5) can only be examined within the two selection-on conditions, never contrasted against a "
@@ -1305,8 +1306,8 @@ def run_pipeline(label="7b"):
         print(f"[{label}] Published -> {PUBLISH_DIR}")
 
 
-# 2026-08-24: PUBLISH_DIR is a module global (like OUT_DIR/REF_FAMILY/N_AGENTS/
-# GROUP_SIZE above) so run_pipeline() can read it after configure_tier() sets it.
+# PUBLISH_DIR is a module global (like OUT_DIR/REF_FAMILY/N_AGENTS/GROUP_SIZE
+# above) so run_pipeline() can read it after configure_tier() sets it.
 PUBLISH_DIR = None
 
 
@@ -1319,10 +1320,10 @@ def configure_tier(tier, setting=None):
         MODEL_SPECS = TIER_FAMILY_SPECS[tier]
         REF_FAMILY = TIER_REF_FAMILY[tier]
         N_AGENTS, GROUP_SIZE = 12, 4
-        # 7b keeps the script's original OUT_DIR unchanged (exports/social_selection_feedback,
-        # relative to cwd) -- this is the established canonical MAIN location other
+        # 7b keeps the module-level default OUT_DIR (exports/social_selection_feedback,
+        # anchored to this file's location) -- the canonical MAIN location other
         # things already point at; only s2 gets a new dedicated export dir.
-        OUT_DIR = "exports/social_selection_feedback" if tier == "7b" else \
+        OUT_DIR = os.path.join(_ANALYSIS_DIR, "exports", "social_selection_feedback") if tier == "7b" else \
             f"{BASE}/code/analysis/exports/social_selection_feedback_{tier}"
         PUBLISH_DIR = TIER_PUBLISH_DIR[tier]
         return tier
@@ -1339,21 +1340,19 @@ def configure_tier(tier, setting=None):
 
 
 def main():
-    """CLI entry point (`--tier` dispatch). Existing wrapper scripts
-    (selection_mechanism_llama_mistral_qwen.py,
-    selection_mechanism_gpt5mini_llama70b_mistral13b_qwen72b.py) call this
-    directly after monkeypatching MODEL_SPECS/OUT_DIR/REF_FAMILY themselves
-    -- when run that way (no CLI args), --tier defaults to None and this
-    just runs the pipeline once against whatever globals are already set,
-    preserving their pre-2026-08-24 behavior. Only an explicit --tier
-    (i.e. running this file directly) engages the new tier dispatch."""
+    """CLI entry point (`--tier` dispatch). A caller can also monkey-patch
+    MODEL_SPECS/OUT_DIR/REF_FAMILY at the module level and call this
+    directly with no CLI args -- --tier then defaults to None and this just
+    runs the pipeline once against whatever globals are already set,
+    without engaging configure_tier(). Only an explicit --tier (i.e.
+    running this file directly) engages the tier dispatch."""
     import argparse
     parser = argparse.ArgumentParser(description="Social-selection feedback-chain analysis.")
     parser.add_argument("--tier", choices=["7b", "s2", "community", "group", "mcpr", "all"], default=None,
                         help="7b = MAIN; s2 = supplementary replication; "
                              "community/group/mcpr = structural robustness (all settings per axis). "
                              "Omit to run once against whatever MODEL_SPECS/OUT_DIR/REF_FAMILY are "
-                             "already set (back-compat for the selection_mechanism_*.py wrapper scripts).")
+                             "already set on the module.")
     args, _unknown = parser.parse_known_args()
 
     if args.tier is None:

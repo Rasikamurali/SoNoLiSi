@@ -1,85 +1,47 @@
 # ============================================================
 # SoNoLiSi: Social Norm Learning and Selection
-# Group-scoped multi-agent LLM simulation of norm emergence in a
-# repeated public-goods game (v5, local)
+# Group-scoped repeated public-goods-game simulation (v5)
 #
-# ENVIRONMENT. N LLM-driven agents repeatedly choose a contribution
-# c in [0, ENDOWMENT] to a shared group fund. Each round, agents are
-# partitioned into groups of GROUP_SIZE; a group's fund (the sum of
-# its members' contributions, scaled by a multiplier) is split evenly
-# among the group, so a member's payoff is (ENDOWMENT - c) + share.
-# No agent is given an explicit belief-state or norm variable to
-# reason over directly: normative/empirical expectations (NE/EE) and
-# partner reputations are elicited from, and act back on, free-text
-# LLM behavior only. Group formation happens first each round, and every
-# subsequent step (discussion, evaluation, perception) is scoped to
-# that round's group: agents only see and respond to their own
-# groupmates, not the full population.
+# ENVIRONMENT. N LLM agents repeatedly contribute c in [0, ENDOWMENT]
+# within groups of GROUP_SIZE. Contributions are multiplied and
+# redistributed equally within each group. All interaction is
+# group-scoped: agents observe and respond only to their current
+# groupmates.
 #
-# MECHANISMS. Four independently toggleable channels (see
-# make_config() below) let the experimental conditions isolate each
-# one's causal contribution to norm emergence:
-#   - Discussion (social learning): before deciding, each group holds
-#     its own short natural-language exchange, grounded in that
-#     group's discussion transcript only.
-#   - Selection (social inclusion/exclusion): groups are formed each
-#     round by sampling from a directed, weighted reputation network
-#     rather than uniformly at random, so agents with a poor
-#     reputation are less likely to be picked as partners and can
-#     fall below a participation threshold that excludes them from
-#     that round's groups entirely.
-#   - Evaluation: after contributing, each agent privately rates its
-#     groupmates in [-1, 1]; these ratings update the directed edges
-#     of the reputation network (negative ratings degrade trust
-#     faster than positive ratings rebuild it), and are only active
-#     alongside selection, since they exist to drive it.
-#   - Perception: each agent also produces a post-round self-report
-#     of its normative expectation / NE ("what people should
-#     contribute"), its empirical expectation / EE ("what people do
-#     contribute"), and preferred/avoided groupmates. This report
-#     (a) is folded into the agent's own memory, giving it continuity
-#     of belief across rounds, (b) further updates the reputation
-#     network via stated partner preferences (restricted to actual
-#     groupmates), and (c) pulls the agent's cooperation_tendency
-#     toward its own inferred normative expectation.
+# MECHANISMS.
+#   - Social learning (SL): pre-decision group discussion.
+#   - Social selection (SS): group formation uses a directed weighted
+#     reputation network; sufficiently weak ties can lead to exclusion.
+#   - Evaluation: agents privately rate groupmates after contribution;
+#     ratings update reputation-network weights and are active with SS.
+#   - Expectation elicitation (E): post-round reports of normative
+#     expectation (NE), empirical expectation (EE), and partner
+#     preferences. These reports enter memory and can update network
+#     preferences and cooperation tendency.
 #
-# CONDITIONS (make_config): the main arm ablates discussion (social
-# learning, SL) and selection (social selection, SS) on top of a base
-# expectation-elicitation channel (E) -- perception, on in every
-# condition except the empty-set baseline, which elicits no
-# expectations at all (evaluation tracks selection throughout, since
-# it only serves to drive it):
-#   FULL            E+SL+SS         discussion=on,  selection=on   (evaluation on,  perception on)
-#   NO_DISCUSSION   E+SS            discussion=off, selection=on   (evaluation on,  perception on)
-#   NO_SELECTION    E+SL            discussion=on,  selection=off  (evaluation off, perception on;  groups uniform-random)
-#   BASELINE        E               discussion=off, selection=off  (evaluation off, perception on;  groups uniform-random)
-#   PURE_BASELINE   ∅ (empty set)   discussion=off, selection=off  (evaluation off, perception off; groups uniform-random)
-# A second, no-expectations arm additionally disables perception on
-# top of the FULL/discussion-only/selection-only settings, isolating
-# discussion and selection from expectation formation entirely:
-#   FULL_NO_EXPECT              discussion=on,  selection=on
-#   DISCUSSION_ONLY_NO_EXPECT   discussion=on,  selection=off
-#   SELECTION_ONLY_NO_EXPECT    discussion=off, selection=on
+# MAIN CONDITIONS.
+#   FULL            = E + SL + SS
+#   NO_DISCUSSION   = E + SS
+#   NO_SELECTION    = E + SL
+#   BASELINE        = E
+#   PURE_BASELINE   = ∅
 #
-# ROUND ORDER: (1) group formation, (2) discussion (per group), (3)
-# contribution decisions, (4) payoffs, (5) evaluation (within group),
-# (6) perception (within group), (7) memory update.
+# Additional no-expectation conditions isolate SL and SS without E:
+#   FULL_NO_EXPECT              = SL + SS
+#   DISCUSSION_ONLY_NO_EXPECT   = SL
+#   SELECTION_ONLY_NO_EXPECT    = SS
 #
-# MODELS. Runs either proprietary models via the OpenAI API (e.g.
-# gpt-4o-mini, gpt-5-mini) or open-weight models served locally with
-# vLLM -- Llama-3.1-8B/70B, Llama-2-13B, Mistral-7B/Nemo-12B, and
-# Qwen2.5-7B/14B/72B (see AVAILABLE_MODELS) -- selected per --model
-# value and mixable within one invocation. For the perception prompt's
-# normative-expectation (NE) field, API models may report null when
-# the group's expectations are unclear; open-weight models are
-# instead prompted to always give a best-guess estimate, since they
-# defaulted to null too readily otherwise.
+# ROUND ORDER.
+#   (1) group formation, (2) discussion, (3) contribution,
+#   (4) payoff, (5) evaluation, (6) expectation/perception update,
+#   (7) memory update.
 #
-# ROBUSTNESS DESIGNS. --n-agents/--group-size vary population and
-# group size directly. --mcpr instead holds the marginal per-capita
-# return constant as group size varies: the fund multiplier is
-# computed per group as MCPR x actual group size rather than fixed,
-# so the incentive to cooperate does not confound group-size effects.
+# MODELS. Supports OpenAI API models and locally served open-weight
+# models (Llama, Mistral, Qwen; see AVAILABLE_MODELS).
+#
+# ROBUSTNESS. --n-agents and --group-size vary community/group size.
+# --mcpr varies the marginal per-capita return by setting the public-good
+# multiplier from MPCR × actual group size.
 # ============================================================
 
 from __future__ import annotations
@@ -111,8 +73,11 @@ RESULTS_DIR = os.path.join(THIS_DIR, "..", "results")
 # Open-source (vLLM) model configuration
 # ============================================================
 
+# Both must be supplied by the environment -- no embedded defaults. CACHE_DIR
+# is where vLLM downloads/caches model weights (can be large); point it at
+# whatever local model cache this machine uses.
 HF_TOKEN  = os.getenv("HF_TOKEN")
-CACHE_DIR = "/data3/models/hub"
+CACHE_DIR = os.getenv("HF_MODEL_CACHE_DIR", "/data3/models/hub")
 if HF_TOKEN:
     os.environ.setdefault("HF_TOKEN", HF_TOKEN)
 
@@ -212,7 +177,7 @@ def _get_openai_client():
 # ============================================================
 
 class LocalModel:
-    """Wraps a vLLM engine for a single model."""
+    """vLLM engine wrapper for one model."""
 
     def __init__(self, model_name: str):
         try:
@@ -270,7 +235,7 @@ def _get_model(agent_id: int) -> LocalModel:
 
 
 def _extract_json(text: str) -> dict:
-    """Extract the first valid JSON object from raw model output."""
+    """Extracts the first valid JSON object from model output."""
     text = text.strip()
     try:
         return json.loads(text)
@@ -308,9 +273,8 @@ class SimConfig:
     # If set (via --mcpr), the group-fund multiplier is computed per group as
     # MCPR x actual group size instead of the fixed MULTIPLIER above, holding
     # the per-token marginal return constant across group sizes (the
-    # group-size-variation experiment, formerly SoNoLiSi_v5_os_local_groupsizevary.py).
-    # None (default) preserves the exact fixed-MULTIPLIER behavior/wording of
-    # every run to date.
+    # group-size-variation robustness sweep). None (default) preserves the
+    # exact fixed-MULTIPLIER behavior/wording of every run to date.
     MCPR: Optional[float] = None
 
     # Condition toggles
@@ -432,9 +396,8 @@ def make_config(condition: str, n_agents: int = 12, group_size: int = 4,
         cfg.selection_on = False
         cfg.evaluation_on = False
         cfg.perception_on = False
-    # No-expectations ablation arm (formerly SoNoLiSi_v5_(os_)local_noexpect.py):
-    # perception/norm-reflection is disabled, isolating discussion and/or
-    # selection from expectation formation.
+    # No-expectations ablation arm: perception/norm-reflection is disabled,
+    # isolating discussion and/or selection from expectation formation.
     elif condition == "FULL_NO_EXPECT":
         cfg.discussion_on = True
         cfg.selection_on = True
@@ -459,8 +422,7 @@ ALL_CONDITIONS       = STANDARD_CONDITIONS + sorted(NO_EXPECT_CONDITIONS)
 
 
 def group_multiplier(config: SimConfig, group_size: int) -> float:
-    """MCPR x actual group size if config.MCPR is set (group-size-variation
-    experiment), else the fixed MULTIPLIER (every run to date)."""
+    """MCPR x group size if set, else fixed MULTIPLIER."""
     if config.MCPR is not None:
         return config.MCPR * group_size
     return config.MULTIPLIER
@@ -495,12 +457,8 @@ def init_network(agents: List[Agent]) -> nx.DiGraph:
 # ============================================================
 
 def form_groups(agents: List[Agent], network: nx.DiGraph, config: SimConfig) -> List[List[int]]:
-    """
-    Probabilistic group formation from directed edge weights.
-
-      - Seed: sampled proportional to each agent's average INCOMING edge weight.
-      - Partners: sampled proportional to the seed's OUTGOING edge weights.
-    """
+    """Group formation: seed ~ avg INCOMING weight, partners ~ seed's
+    OUTGOING weights."""
     unassigned = list(set(a.id for a in agents))
     groups: List[List[int]] = []
 
@@ -578,10 +536,8 @@ def update_network_from_perception(
     group_membership: Dict[int, List[int]],
     config: SimConfig,
 ) -> nx.DiGraph:
-    """
-    Update edge weights from stated partner preferences, restricted to agents
-    who were actually in the same group this round. Hallucinated IDs are ignored.
-    """
+    """Updates edges from stated partner preferences (groupmates only;
+    hallucinated IDs ignored)."""
     for agent_id, perc in perceptions.items():
         valid_partners = set(group_membership.get(agent_id, []))
         preferred = perc.get("preferred_partners", [])
@@ -708,10 +664,7 @@ def build_discussion_prompt(
     transcript: List[dict],
     config: SimConfig,
 ) -> str:
-    """
-    Discussion prompt scoped to the agent's assigned group.
-    The agent only sees and responds to their group members' messages.
-    """
+    """Discussion prompt for the agent's group."""
     transcript_str = (
         "\n".join(f"  Agent {m['agent_id']}: {m['message']}" for m in transcript)
         if transcript else "  (No messages yet — you go first.)"
@@ -1241,9 +1194,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         metavar="COND",
         help="Condition(s) to run. Choices: the 5 standard conditions "
              f"({STANDARD_CONDITIONS}) plus the 3 no-expectations ablation "
-             f"conditions ({sorted(NO_EXPECT_CONDITIONS)}, formerly "
-             "SoNoLiSi_v5_(os_)local_noexpect.py). Default: the 5 standard "
-             "conditions.",
+             f"conditions ({sorted(NO_EXPECT_CONDITIONS)}). Default: the 5 "
+             "standard conditions.",
     )
     parser.add_argument(
         "--seeds", "-s",
@@ -1298,8 +1250,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         type=float,
         default=None,
         metavar="MCPR",
-        help="Marginal per-capita return (formerly "
-             "SoNoLiSi_v5_os_local_groupsizevary.py). If given, the group-fund "
+        help="Marginal per-capita return. If given, the group-fund "
              "multiplier is computed per group as MCPR x actual group size "
              "instead of the fixed default multiplier (1.6), holding the "
              "per-token return constant across group sizes, and results are "
@@ -1376,9 +1327,8 @@ def main(argv: Optional[List[str]] = None) -> None:
 
                 # Directory + filename tagging: "local_groupsizevary" (--mcpr
                 # given) takes precedence over "local"/"local_noexpect", since
-                # the one precedent script that varied MCPR never combined it
-                # with a no-expectations condition. All three subtrees line up
-                # exactly with the formerly-separate scripts' own conventions.
+                # MCPR sweeps are never combined with a no-expectations
+                # condition in this release's runs.
                 is_noexpect = cond in NO_EXPECT_CONDITIONS
                 if mcpr is not None:
                     variant_dir = "local_groupsizevary"

@@ -7,10 +7,13 @@ average incoming network weight (the quantity the selection mechanism
 thresholds on), and whether it was excluded that round.
 
 Built to check whether exclusion tracks poor contribution or reflects other
-dynamics (e.g. group composition, network position) — see
-`get_excluded_agents()` in SoNoLiSi_v5_os_local.py: an agent is excluded when
-its average incoming edge weight drops below `participation_threshold` (0.3).
-Missing edges count as weight 0, matching the simulation's own computation.
+dynamics (e.g. group composition, network position). Exclusion itself is
+computed by the simulation, not by this script: an agent is excluded from a
+round when its average incoming network edge weight (from that round's
+selection step) drops below `participation_threshold` (0.3); missing edges
+count as weight 0. This script reproduces that same average-incoming-weight
+computation from the logged edges purely to expose it as a column alongside
+contribution/payoff, so it can be checked against `excluded_this_round`.
 
 Output: exports/round_level_agent_panel.csv
 """
@@ -23,11 +26,10 @@ import sys
 import numpy as np
 import pandas as pd
 
-# Reorg (2026-08-11): this file now lives in code/analysis/selection/, but
-# model_specs.py stays at code/analysis/ (shared across many themes) --
-# walk up to find it and add every code/analysis/ subfolder to sys.path so
-# bare local imports keep working regardless of which theme folder a module
-# ended up in.
+# This file lives in code/analysis/alignment/, but model_specs.py stays at
+# code/analysis/ (shared across every theme folder) -- walk up to find it and
+# add every code/analysis/ subfolder to sys.path so bare local imports keep
+# working regardless of which theme folder a module lives in.
 _ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
 while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
     _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
@@ -40,7 +42,7 @@ for _p in [_ANALYSIS_DIR] + [
 
 from model_specs import MODEL_SPECS, CONDITIONS
 
-PARTICIPATION_THRESHOLD = 0.3  # from SimConfig in SoNoLiSi_v5_os_local.py
+PARTICIPATION_THRESHOLD = 0.3  # matches the simulation's own exclusion threshold
 
 
 def build_panel():
@@ -124,8 +126,13 @@ def build_panel():
 
 def main():
     panel = build_panel()
-    panel.to_csv("exports/round_level_agent_panel.csv", index=False)
-    print(f"Wrote exports/round_level_agent_panel.csv  shape={panel.shape}")
+    # Anchored to this file's own location (not cwd) so this can be run from
+    # anywhere and still land where gap_based_alignment.py's PANEL_PATH expects it.
+    out_dir = os.path.join(_ANALYSIS_DIR, "exports")
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, "round_level_agent_panel.csv")
+    panel.to_csv(out_path, index=False)
+    print(f"Wrote {out_path}  shape={panel.shape}")
 
 
 if __name__ == "__main__":

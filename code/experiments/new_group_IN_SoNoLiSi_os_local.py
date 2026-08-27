@@ -1,70 +1,34 @@
-# ============================================================
-# SoNoLiSi: Social Norm Learning and Selection
-# Adversarial agent injection with community-undercutting priors
-# (v5, group-scoped, open-weight/vLLM backend)
+# Adversarial agent injection experiment.
 #
-# PURPOSE. This experiment tests the stability of an emerged cooperative
-# norm against an internal shock: partway through an otherwise-normal
-# run, a subset of agents is silently replaced by newly-initialized
-# "adversarial" agents carrying a low cooperation tendency and a
-# self-described prior belief that a below-community contribution level
-# is "normal and fair." The replaced agents keep the identities and
-# full reputation-network edges (all incoming and outgoing weights) of
-# whoever they displaced, so they inherit that social capital rather
-# than entering as unknown strangers, and participate in group
-# formation, discussion, evaluation, and perception exactly as any
-# other agent from the round after replacement onward. The question is
-# whether, and how quickly, the group's contribution norm recovers --
-# and whether that recovery differs by condition (E, E+SS, E+SL,
-# E+SL+SS -- see SoNoLiSi_v5_local.py) or by which agents are replaced.
+# PURPOSE. Tests the stability of an emerged cooperative norm to an internal
+# shock. After round 10 or 20, a subset of incumbent agents is replaced by
+# adversarial agents with low cooperation tendency and a prior belief that a
+# below-community contribution level is "normal and fair." Replaced agents
+# retain the identities and full reputation-network edges of the incumbents
+# they displace, inheriting their social capital.
 #
-# ADVERSARIAL PRIOR (this variant). The adversarial agents' stated
-# belief is not a fixed constant: at the moment of replacement, the
-# community's currently observed normative expectation (NE) is computed
-# as the average, across all agents, of their most recent elicited NE,
-# and the incoming adversarial agents are given a belief equal to
-# --undercut-factor (default 0.5) times that observed value -- i.e., a
-# belief calibrated to be clearly below whatever norm the community has
-# actually converged on, rather than an arbitrary absolute number.
+# ADVERSARIAL PRIOR. At injection, the community's current normative
+# expectation (NE) is calculated from agents' most recent elicited NE.
+# Adversarial agents receive a persistent prior equal to
+# --undercut-factor × community NE (default 0.5), ensuring that their prior is
+# calibrated below the norm that has actually emerged.
 #
-# The adversarial system prompt (backstory + undercut belief) persists
-# for the rest of the simulation once assigned -- it is never reverted.
+# REPLACEMENT. --replace-mode=random replaces GROUP_SIZE randomly selected
+# agents; --replace-mode=top replaces the GROUP_SIZE agents with the highest
+# average incoming reputation weights.
 #
-# REPLACEMENT SELECTION (--replace-mode): "random" replaces GROUP_SIZE
-# agents chosen uniformly at random; "top" replaces the GROUP_SIZE
-# agents with the highest average incoming reputation weight at the
-# time of replacement (i.e., the most socially trusted). Note GROUP_SIZE
-# here does double duty: it is both the normal per-round discussion/
-# decision group size and the number of agents replaced per injection.
+# DESIGN. Each run contains one injection point followed by
+# --extension-rounds post-injection rounds (default 5). Injection at rounds
+# 10 and 20 is evaluated in separate independent simulations. Conditions are
+# E, E+SS, E+SL, and E+SL+SS.
 #
-# DESIGN. Each run has exactly one injection point (--inject-round,
-# an integer) and two phases: a normal phase (rounds 1..INJECT_ROUND,
-# behaving identically to SoNoLiSi_v5_local.py) and an extension phase
-# (the following EXTENSION_ROUNDS rounds, post-replacement). To compare
-# injection at different points in training, --inject-round accepts a
-# list (default 10 20) and the CLI runs one fully independent
-# simulation per value -- these are separate runs, not one simulation
-# with two sequential injections. Round logs carry a "phase" field
-# ("normal" | "extension"); the first extension-phase round additionally
-# carries "agents_replaced", "community_injunctive_norm", and
-# "adversarial_injunctive_norm" (the observed NE and the undercut belief
-# assigned from it).
-#
-# CLI:
-#   --model / -m            : model key(s) to run
-#   --conditions / -c       : condition(s) to run
-#   --seeds / -s            : explicit seed list
-#   --n                     : number of seeds from default list
-#   --device / -d           : CUDA device index
-#   --n-agents              : total agents (default 12)
-#   --group-size            : per-round group size / agents replaced per injection (default 4)
-#   --inject-round / -i     : round(s) after which replacement occurs (default 10 20)
-#   --extension-rounds      : rounds simulated after replacement (default 5)
-#   --replace-mode / -r     : "random" | "top" (default: random)
-#   --new-agent-prompt / -p : "default" | "adversarial" (default: adversarial)
-#   --undercut-factor / -u  : fraction of the observed community NE assigned
-#                             to adversarial agents (default 0.5)
-# ============================================================
+# Key CLI options:
+#   --inject-round      injection round(s), default: 10 20
+#   --extension-rounds  post-injection rounds, default: 5
+#   --replace-mode      random | top
+#   --undercut-factor   adversarial prior as fraction of community NE,
+#                       default: 0.5
+#   --group-size        group size and number of agents replaced, default: 4
 
 import json
 import logging
@@ -91,9 +55,14 @@ logger = logging.getLogger(__name__)
 # Model configuration
 # ============================================================
 
+# Must be supplied by the environment -- no embedded default. CACHE_DIR is
+# where vLLM downloads/caches model weights (can be large); point it at
+# whatever local model cache this machine uses.
 HF_TOKEN    = os.getenv("HF_TOKEN")
-CACHE_DIR   = "/data3/models/hub"
-RESULTS_DIR = "../results"
+CACHE_DIR   = os.getenv("HF_MODEL_CACHE_DIR", "/data3/models/hub")
+# Anchored to this file's own location (not cwd) so this resolves correctly
+# regardless of the caller's working directory.
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "results")
 
 if HF_TOKEN:
     os.environ.setdefault("HF_TOKEN", HF_TOKEN)
@@ -381,14 +350,8 @@ def init_network(agents: List[Agent]) -> nx.DiGraph:
 
 
 def _observed_injunctive_norm(agents: List[Agent], config: SimConfig) -> float:
-    """
-    The community's currently observed injunctive norm: the average, across
-    all agents, of each agent's most recent perceived injunctive norm (their
-    own best estimate of what the group thinks people SHOULD contribute).
-
-    Falls back to the midpoint of the endowment if no agent has perceived a
-    norm yet (e.g. replacement happening before any perception round ran).
-    """
+    """Average of each agent's most recent perceived injunctive norm; falls
+    back to ENDOWMENT/2 if no agent has perceived one yet."""
     vals: List[float] = []
     for a in agents:
         if not a.memory:
@@ -408,27 +371,12 @@ def replace_agents(
     network: nx.DiGraph,
     config: SimConfig,
 ) -> Tuple[List[int], float, float]:
-    """
-    Replace GROUP_SIZE existing agents with adversarial versions in-place.
-
-    The replaced agents keep their IDs and all network edges (incoming and
-    outgoing weights are untouched), so the adversarial agents inherit the
-    social capital of whoever they displaced.
-
-    What changes per replaced agent:
-      - cooperation_tendency: reset to random [0, 0.2] ("adversarial") or [0, 1] ("default")
-      - prompt_override: set to ADVERSARIAL_SYSTEM_PROMPT_TEMPLATE (with the
-        community's observed injunctive norm undercut by NORM_UNDERCUT_FACTOR
-        baked in) or cleared
-      - memory / memory_summary: cleared (blank slate — they don't remember prior rounds)
-
-    Selection modes (config.REPLACE_MODE):
-      "random" — GROUP_SIZE agents chosen uniformly at random.
-      "top"    — GROUP_SIZE agents with the highest average incoming weight
-                 (i.e. the most socially trusted at this point in time).
-
-    Returns (replaced_ids, community_injunctive_norm, adversarial_injunctive_norm).
-    """
+    """Replace GROUP_SIZE agents in-place (IDs and network edges kept, so
+    they inherit the displaced agents' social capital): cooperation_tendency
+    reset, prompt_override set to the undercut-belief adversarial prompt (or
+    cleared for "default"), memory wiped. REPLACE_MODE picks "random" agents
+    or the "top" (most-trusted) ones. Returns (replaced_ids, community_norm,
+    adversarial_norm)."""
     all_ids = [a.id for a in agents]
 
     if config.REPLACE_MODE == "top":
@@ -952,15 +900,9 @@ def _execute_round(
     community_injunctive_norm: Optional[float] = None,
     adversarial_injunctive_norm: Optional[float] = None,
 ) -> None:
-    """
-    Run one round (LOCAL structure).
-
-    replaced_ids: if provided, written to the log as "agents_replaced" to
-    mark which agents were just swapped in this phase. Only passed on the
-    first round of each phase where a replacement occurred. When present,
-    community_injunctive_norm / adversarial_injunctive_norm are also logged
-    for traceability of the norm-undercutting manipulation.
-    """
+    """Run one round. replaced_ids (only passed on a phase's first round,
+    if a replacement occurred) plus the two norm values are logged for
+    traceability of the undercutting manipulation."""
     logger.info(f"[{condition}|{phase}] Round {t}")
 
     # ----------------------------------------------------------

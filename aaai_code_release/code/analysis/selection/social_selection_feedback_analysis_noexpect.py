@@ -33,13 +33,14 @@ import statsmodels.formula.api as smf
 
 warnings.filterwarnings("ignore")
 
-# BASE is the root of this release, computed from this file's own location
-# (three levels up from code/analysis/selection/) so paths below still work
-# if the release is moved or copied elsewhere.
-BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-# Anchored to this file's own location (not cwd) so this resolves correctly
-# regardless of the caller's working directory.
-OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports", "social_selection_feedback_noexpect")
+# Walk up from this file to code/analysis/ (marked by model_specs.py), the
+# same anchor its sibling social_selection_feedback_analysis.py uses -- keeps
+# OUT_DIR at the flat code/analysis/exports/ root rather than nested one
+# level deeper under selection/.
+_ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
+    _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
+OUT_DIR = os.path.join(_ANALYSIS_DIR, "exports", "social_selection_feedback_noexpect")
 
 MODELS = [("llama", "Llama-7B"), ("mistral", "Mistral-7B"), ("qwen", "Qwen-7B")]
 SEEDS = list(range(42, 52))   # matched across both arms

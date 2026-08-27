@@ -1,25 +1,20 @@
 """
 contribution_all_conditions_plot.py
 -------------------------------------
-The paper's canonical contribution-trajectory figure: mean contribution over
-20 rounds, all 5 conditions overlaid, one panel per model. Same script for
-every use of this figure:
-
-  MAIN_RESULTS/1_contribution_trajectories/          7B/8B, local
-  SUPPLEMENTARY_RESULTS/2_bigger_models/...           GPT-5-mini/Llama-70B/Mistral-13B/Qwen-72B
-  SUPPLEMENTARY_RESULTS/3_13b_tier/...                Llama-13B/Mistral-13B/Qwen-14B
-  SUPPLEMENTARY_RESULTS/4_70b_tier/...                Llama-70B/Qwen-72B
-  (community-size / group-size / MCPR sweeps)         via --variant local/N16_G4 etc.
-
-Was duplicated near-verbatim across run_local_analysis.py, run_13b_analysis.py,
-run_70b_analysis.py, and run_s2_analysis.py; this is the single copy those
-orchestrators now call (matching how behavior_quantified.py, its OLS+Wald+
-Bonferroni counterpart, already worked).
+Draws the paper's contribution-trajectory figure: mean contribution per
+round over all 20 rounds, with all 5 experimental conditions overlaid as
+separate lines, one panel per model. The same script (with different
+--models/--variant/--out-dir arguments) produces every version of this
+figure used in the paper -- the main 7B/8B result, the bigger-model
+replication, the 13B and 70B tiers, and the community-size/group-size/MCPR
+structural sweeps.
 
 Colors/markers/legend labels/sizing are fixed -- this is meant to always
 produce the same visual style, not a general-purpose plotting tool.
 
-Output: {out_dir}/{out_name}.pdf / .png
+Inputs: raw simulation logs under {results_dir}/{model}/{variant}/seed{N}/
+log_*.json for each requested model.
+Outputs: {out_dir}/{out_name}.pdf and {out_dir}/{out_name}.png.
 """
 
 import argparse
@@ -38,7 +33,12 @@ from scipy import stats as _stats
 warnings.filterwarnings("ignore")
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-RESULTS = os.getenv("SNLS_RESULTS_DIR", "/data3/rasimura/social-norm-evo/results")
+# BASE is the root of this release, computed from this file's own location
+# (three levels up from code/analysis/behavioral/) so the default results
+# path still works if the release is moved or copied elsewhere. --results-dir
+# (or the SNLS_RESULTS_DIR environment variable) can override this default.
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+RESULTS = os.getenv("SNLS_RESULTS_DIR", f"{BASE}/results")
 
 CONDITIONS = ["FULL", "NO_DISCUSSION", "NO_SELECTION", "BASELINE", "PURE_BASELINE"]
 ROUNDS     = list(range(1, 21))
@@ -90,6 +90,8 @@ DEFAULT_DISPLAY_LABELS = {
 # ─── Data loading ─────────────────────────────────────────────────────────────
 
 def load_latest_log(results_dir, model, variant, seed, condition):
+    # Finds and loads the log file for one (model, seed, condition)
+    # combination. If more than one file matches, the last one found wins.
     pattern = os.path.join(results_dir, model, variant, f"seed{seed}", "log_*.json")
     best = {}
     for p in sorted(glob.glob(pattern)):
@@ -104,6 +106,10 @@ def load_latest_log(results_dir, model, variant, seed, condition):
 
 def build_contribution_store(results_dir, variant, models, seeds):
     """store[model][cond][seed] = [mean_contribution per round]"""
+    # For every model/condition/seed, averages contribution across all
+    # agents in each round, giving one trajectory (one value per round)
+    # per seed. Only keeps a seed's trajectory if it has a value for every
+    # round (an incomplete run is dropped rather than plotted with gaps).
     store = {m: {c: {} for c in CONDITIONS} for m in models}
     for model in models:
         for cond in CONDITIONS:
@@ -123,6 +129,8 @@ def mean_ci95(arr):
     arr: one row per seed/run (run-clustered). Returns (mean, half-width) for a
     t-based 95% CI, df = n_seeds - 1 per round.
     """
+    # Standard across-seed mean and 95% confidence interval, computed
+    # separately for each round (each column of arr).
     n = np.sum(~np.isnan(arr), axis=0)
     mean = np.nanmean(arr, axis=0)
     se = np.nanstd(arr, axis=0, ddof=1) / np.sqrt(np.where(n > 1, n, np.nan))
@@ -134,6 +142,10 @@ def mean_ci95(arr):
 
 def plot_all_conditions(store, models, display_labels, out_dir, out_name):
     """1 row x len(models) cols: all conditions overlaid per model."""
+    # One panel per model. Within each panel, draws one line per condition
+    # (mean contribution per round, with a shaded 95% confidence band),
+    # then adds a single shared legend below the whole figure and saves
+    # both a PDF and a PNG.
     rounds = np.array(ROUNDS)
     big_label  = LABEL_SIZE + 16
     big_tick   = TICK_SIZE + 14

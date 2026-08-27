@@ -3,33 +3,15 @@ community_group_contribution_tables.py
 ----------------------------------------
 Compact statistical tables for community-size (N=12/16/20) and group-size
 (G=3/4/6/8, two matched strata) structural robustness -- the contribution
-(behavioral) half. Same logic as the MPCR statistical table
-(code/analysis/mcpr/mpcr_statistical_table.py): report condition contrasts
-at each structural setting, omnibus Condition x Setting interaction tests,
-and direct tests of whether those contrasts change relative to the matched
-default (N=12 for community size, G=4 for group size).
+half. Reports condition contrasts per setting, Condition x Setting
+interaction tests, and whether contrasts shift relative to the matched
+default (N=12 / G=4) -- not whether N/G itself has a main effect.
 
-The central question is NOT "does N/G have a main effect on contribution."
-It is: do the substantive experimental-condition effects change relative to
-the matched default social structure?
-
-Reuses analyze_structural_robustness.py's (asr) data build and OLS/Wald
-machinery wholesale rather than rebuilding it -- that script already
-implements almost everything here:
-  - asr.load_axis / asr.qc_for_axis  -- run-level loader + QC (10 seeds/cell,
-    latest-timestamp-wins dedup, one row per model x N/G x condition x seed).
-  - asr.community_condition_contrasts -- PAPER_PAIRS contrasts per N, pooled
-    with model FE, HC3, Bonferroni-corrected.
-  - asr.community_interaction_models -- pooled Condition*N+ModelFE Wald test
-    AND the Condition*N*Tier three-way interaction test (tier heterogeneity).
-  - asr.group_interaction_models -- Condition*G+ModelFE Wald test fit
-    SEPARATELY per stratum (N12: G in {3,4,6}; N16: G in {4,8}) -- never
-    pools the two matched designs into one naive G=3/4/6/8 sweep.
-This script adds only what didn't already exist: direct N-vs-12 / G-vs-4
-contrast-difference tests (reading interaction coefficients off the
-already-fitted pooled models, same covariance-aware trick as the MPCR
-table), tier-specific contrasts (only built if the 3-way interaction test
-is significant), and the compact table/CSV/notes formatting.
+Reuses analyze_structural_robustness.py (asr) wholesale for the run-level
+loader/QC, PAPER_PAIRS contrasts, and Condition*N / Condition*G Wald tests
+(group fit separately per stratum, never pooled across N=12/N=16). Adds
+only: N-vs-12/G-vs-4 contrast-difference tests, tier-specific contrasts
+(if the 3-way interaction is significant), and table/CSV formatting.
 
 Output: figures/SUPPLEMENTARY_RESULTS/5_community_group_mcpr/{community,group}/
 """
@@ -41,6 +23,9 @@ import numpy as np
 import pandas as pd
 import scipy.stats as scipy_stats
 
+# Walk up from this file to find model_specs.py (shared across every theme
+# folder), then add every code/analysis/ subfolder to sys.path so bare local
+# imports keep working regardless of which theme folder a module lives in.
 _ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
 while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
     _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
@@ -51,12 +36,14 @@ for _p in [_ANALYSIS_DIR] + [
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-BASE = "/data3/rasimura/social-norm-evo"
-_STRUCTURAL_DIR = f"{BASE}/figures/SUPPLEMENTARY_RESULTS/5_community_group_mcpr/community_group_robusntess"
-if _STRUCTURAL_DIR not in sys.path:
-    sys.path.insert(0, _STRUCTURAL_DIR)
+# BASE is the root of this release, computed from this file's own location
+# (three levels up from code/analysis/behavioral/) so paths below still work
+# if the release is moved or copied elsewhere.
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-import analyze_structural_robustness as asr  # noqa: E402  (the existing structural-robustness analysis this reuses)
+# analyze_structural_robustness.py lives alongside this file, already on
+# sys.path via the anchor-walk above.
+import analyze_structural_robustness as asr  # noqa: E402  (the structural-robustness analysis this reuses)
 from model_specs import stars, SIG_TEX  # noqa: E402
 
 OUT_ROOT = f"{BASE}/figures/SUPPLEMENTARY_RESULTS/5_community_group_mcpr"
@@ -80,9 +67,8 @@ TIER_ORDER = ["7B", "13B/14B", "70B/72B"]
 # ═════════════════════════════════════════════════════════════════════════
 
 def linear_combo_test(result, weights):
-    """weights: {term_name: coefficient} (a term absent from result.params
-    is treated as the omitted/reference level, i.e. coefficient 0 and
-    excluded from the covariance lookup)."""
+    """weights: {term_name: coefficient}; a term absent from result.params
+    is treated as the omitted reference level (0)."""
     params, cov = result.params, result.cov_params()
     terms = [t for t in weights if t in params.index]
     if not terms:
@@ -107,11 +93,8 @@ def _inter_key(cond, level_val, axis_name, ref_level, ref_cond=None):
 
 
 def contrast_change_test(result, cA, cB, level_val, axis_name, ref_level):
-    """Delta_{cA->cB}(level) - Delta_{cA->cB}(ref_level): the change in one
-    condition contrast relative to the matched reference level. Main-effect
-    terms cancel algebraically (Treatment coding), leaving exactly the
-    interaction-term difference -- see mpcr_statistical_table.py's
-    docstring for the derivation, identical here with N or G in place of MPCR."""
+    """Delta_{cA->cB}(level) - Delta_{cA->cB}(ref_level); main effects
+    cancel (Treatment coding), leaving the interaction-term difference."""
     key_b = _inter_key(cB, level_val, axis_name, ref_level)
     key_a = _inter_key(cA, level_val, axis_name, ref_level)
     weights = {}

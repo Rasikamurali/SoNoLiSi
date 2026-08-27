@@ -1,62 +1,29 @@
 """
 gap_based_alignment.py
 -----------------------------
-Item (c) of the perception/alignment consolidation (2026-08-24): OLS test of
-whether the gap between an agent's own elicited injunctive/descriptive
+OLS test of whether the gap between an agent's elicited injunctive/descriptive
 expectation and its contribution predicts the shift into next-round
-contribution. Supersedes gap_based_alignment_test.py (archived to
-code/analysis/archive/alignment/), which this file ports wholesale for the
-family-tier (7b/s2/pooled) path — the statistical logic is unchanged from
-that script; only the tier dispatch, output-path routing, and the new
-community/group-size tiers are new.
+contribution.
 
-    InGap_{i,t}  = IN_{i,t} - Contribution_{i,t}
-    DnGap_{i,t}  = DN_{i,t} - Contribution_{i,t}
-    Shift_{i,t}  = Contribution_{i,t+1} - Contribution_{i,t}
+    InGap_{i,t} = IN_{i,t} - Contribution_{i,t}
+    DnGap_{i,t} = DN_{i,t} - Contribution_{i,t}
+    Shift_{i,t} = Contribution_{i,t+1} - Contribution_{i,t}
+    Shift_{i,t} = b_IN*InGap_{i,t} + b_DN*DnGap_{i,t} + ConditionFE + FamilyFE + RoundFE
 
-Primary model:
-    Shift_{i,t} = b_IN*InGap_{i,t} + b_DN*DnGap_{i,t}
-                  + ConditionFE + FamilyFE + RoundFE + eps_{i,t}
+IN_t/DN_t are elicited after round t's contribution (prospective design),
+but this is still observational, not causal.
 
-IN_t and DN_t are elicited AFTER round t's contribution, so both gap
-predictors are measured no later than t, and the outcome (the move into
-t+1) is the only thing that happens after elicitation. This makes the
-design prospective, but it is still purely observational: a positive
-coefficient describes a correlation between the expectation-behavior
-discrepancy and the subsequent adjustment, not a causal effect.
+Tiers (--tier, default 7b): 7b (PRIMARY: gpt/llama-7b/mistral-7b/qwen-7b),
+s2 (bigger-model replication), pooled (old primary, cross-check), community
+(N in {12,16,20}, G=4, 8 variants, no GPT; one fit per N), group (G varies,
+7B trio, N=12: G in {3,4,6} / N=16: G in {4,8}; one fit per stratum-G).
+Output paths per tier: see TIER_SPECS below.
 
-Tiers (--tier flag, default 7b):
-    7b        - gpt, llama-7b, mistral-7b, qwen-7b. PRIMARY/headline result
-                (2026-08-24: redefined from "pooled across all 9-10
-                families" to 7b-only -- see MAIN_PAPER_RESULTS.md).
-                -> figures/MAIN_RESULTS/4_gap_based_alignment/
-    s2        - gpt-5-mini, llama-70b, mistral-13b, qwen-72b (supplementary
-                replication).
-                -> figures/SUPPLEMENTARY_RESULTS/2_bigger_models/4_gap_based_alignment/
-    pooled    - all families pooled (the OLD primary; kept as a cross-check).
-                -> figures/SUPPORTING_MAIN_RESULTS/4_alignment_cross_checks/subset_all_families/
-    community - population size N in {12, 16, 20}, group size G=4 fixed,
-                8 model variants (7B/13B-14B/70B-72B; no GPT -- GPT has no
-                community-size sweep data). One fit per N.
-                -> figures/SUPPLEMENTARY_RESULTS/5_community_group_mcpr/community/4_gap_based_alignment/
-    group     - interaction group size G, 7B trio only (llama/mistral/qwen),
-                two matched strata (N=12: G in {3,4,6}; N=16: G in {4,8}).
-                One fit per (stratum, G).
-                -> figures/SUPPLEMENTARY_RESULTS/5_community_group_mcpr/group/4_gap_based_alignment/
-
-Family-tier data source: the existing round-level agent panel
-(exports/round_level_agent_panel.csv, built by build_agent_round_panel.py)
-merged with IN/DN pulled fresh from the raw round logs -- unchanged from
-gap_based_alignment_test.py, so the 7b subset's numbers must match that
-script's `--families GPT Llama-7B Mistral-7B Qwen-7B` output exactly.
-
-Community/group data source: no pre-built panel covers these runs, so a
-self-contained raw-log loader (build_base_dataset_from_sources, below) reads
-directly from each run's round_logs -- same InGap/DnGap/Shift definitions,
-same formula, just assembled without the panel dependency. Source directory
-layout (COMMUNITY_SOURCES / GROUP_N12_SOURCES / GROUP_N16_SOURCES) is
-reused from figures/SUPPLEMENTARY_RESULTS/5_community_group_mcpr/
-community_group_robusntess/analyze_structural_robustness.py.
+Data: family tiers use the round-level panel (exports/round_level_agent_panel.csv,
+built by build_agent_round_panel.py) merged with fresh IN/DN; community/group
+tiers have no panel, so build_base_dataset_from_sources reproduces the same
+definitions directly from raw round_logs (sources matching
+analyze_structural_robustness.py's).
 """
 
 import os
@@ -89,7 +56,10 @@ from model_specs import MODEL_SPECS, CONDITIONS
 
 warnings.filterwarnings("ignore")
 
-BASE = "/data3/rasimura/social-norm-evo"
+# BASE is the root of this release, computed from this file's own location
+# (three levels up from code/analysis/alignment/) so paths below still work
+# if the release is moved or copied elsewhere.
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 ALPHA = 0.05
 Z_CRIT = stats.norm.ppf(1 - ALPHA / 2)
 
@@ -108,10 +78,7 @@ TIER_SPECS = {
                "publish_dir": f"{BASE}/figures/SUPPORTING_MAIN_RESULTS/4_alignment_cross_checks/subset_all_families"},
     # Standalone 13B/14B and 70B/72B family groupings, distinct from the "s2"
     # tier above (which mixes gpt-5-mini/llama-70b/mistral-13b/qwen-72b into
-    # one replication set) -- these match run_13b_analysis.py / run_70b_analysis.py's
-    # own MODELS lists, kept so those two orchestrators' perception/alignment
-    # steps still have a tier to point at after stability_analysis.py /
-    # temp_eval_alignment2.py are archived.
+    # one replication set).
     "13b":    {"families": ["Llama-13B", "Mistral-13B", "Qwen-14B"],
                "publish_dir": f"{BASE}/figures/SUPPLEMENTARY_RESULTS/3_13b_tier/4_gap_based_alignment"},
     "70b":    {"families": ["Llama-70B", "Qwen-72B"],
@@ -160,7 +127,7 @@ STRUCTURAL_SETTINGS = {
 
 
 # ═════════════════════════════════════════════════════════════════════════
-# 1. Family-tier data loading (unchanged from gap_based_alignment_test.py)
+# 1. Family-tier data loading
 # ═════════════════════════════════════════════════════════════════════════
 
 PANEL_PATH = f"{BASE}/code/analysis/exports/round_level_agent_panel.csv"
@@ -310,9 +277,8 @@ def load_latest_logs_for_seed(seed_dir):
 
 
 def build_base_dataset_from_sources(sources, axis_label):
-    """sources: {model_key: {dir, seeds, family}}. One row per
-    (run_id, agent_id, round) with contribution/IN/DN -- same columns
-    prepare_gap_data() expects from build_base_dataset()."""
+    """One row per (run_id, agent_id, round) with contribution/IN/DN --
+    same columns prepare_gap_data() expects."""
     rows = []
     for model_key, src in sources.items():
         for seed in src["seeds"]:
@@ -338,7 +304,6 @@ def build_base_dataset_from_sources(sources, axis_label):
 
 # ═════════════════════════════════════════════════════════════════════════
 # 2. Data preparation: lags, gaps, shift, exclusion reporting
-#    (unchanged from gap_based_alignment_test.py)
 # ═════════════════════════════════════════════════════════════════════════
 
 def prepare_gap_data(df):
@@ -402,7 +367,7 @@ def prepare_gap_data(df):
 
 
 # ═════════════════════════════════════════════════════════════════════════
-# 3. Regression helpers (unchanged)
+# 3. Regression helpers
 # ═════════════════════════════════════════════════════════════════════════
 
 def fit_cluster_ols(formula, data, cluster_col="run_id"):
@@ -448,10 +413,12 @@ def fe_formula():
 
 
 # ═════════════════════════════════════════════════════════════════════════
-# 4. Models (unchanged)
+# 4. Models
 # ═════════════════════════════════════════════════════════════════════════
 
 def run_primary_models(df):
+    """Headline regression, fit on raw units and again z-scored (for
+    cross-term effect-size comparison)."""
     formula_raw = f"contribution_shift_lead1 ~ in_gap + dn_gap + {fe_formula()}"
     m_raw = fit_cluster_ols(formula_raw, df)
 
@@ -466,11 +433,15 @@ def run_primary_models(df):
 
 
 def run_lagged_level_model(df):
+    """Predicts next-round contribution LEVEL from raw IN/DN (not gaps);
+    see lagged_alignment_check.py for an independent cross-check."""
     formula = f"contribution_lead1 ~ contribution + IN + DN + {fe_formula()}"
     return fit_cluster_ols(formula, df), formula
 
 
 def run_within_agent_model(df):
+    """Agent-demeaned robustness check: estimate comes only from
+    within-agent variation, not stable cross-agent differences."""
     d = df.copy()
     for col in ["in_gap", "dn_gap", "contribution_shift_lead1"]:
         d[col + "_within"] = d[col] - d.groupby("run_agent_id")[col].transform("mean")
@@ -488,6 +459,8 @@ def run_group_behavior_model(df):
 
 
 def run_asymmetric_model(df):
+    """Splits each gap into positive/negative parts (via clip()) to allow
+    separate slopes for over- vs. under-expectation."""
     d = df.copy()
     d["in_gap_positive"] = d["in_gap"].clip(lower=0)
     d["in_gap_negative"] = d["in_gap"].clip(upper=0)
@@ -499,6 +472,8 @@ def run_asymmetric_model(df):
 
 
 def run_condition_interaction_model(df):
+    """Lets the InGap/DnGap slope vary by condition (main effects absorbed
+    into the interaction, no separate condition FE)."""
     formula = (
         'contribution_shift_lead1 ~ in_gap * C(condition, Treatment(reference="BASELINE")) '
         '+ dn_gap * C(condition, Treatment(reference="BASELINE")) '
@@ -525,6 +500,8 @@ def run_per_family_models(df, family_order):
 
 
 def run_family_interaction_model(df):
+    """Same idea as run_condition_interaction_model but for model family,
+    plus a joint Wald test on each interaction-term set."""
     formula = (
         f'contribution_shift_lead1 ~ in_gap * C(family, Treatment(reference="{FAMILY_REF}")) '
         f'+ dn_gap * C(family, Treatment(reference="{FAMILY_REF}")) '
@@ -541,7 +518,7 @@ def run_family_interaction_model(df):
 
 
 # ═════════════════════════════════════════════════════════════════════════
-# 5. Diagnostics (unchanged)
+# 5. Diagnostics
 # ═════════════════════════════════════════════════════════════════════════
 
 def compute_diagnostics(df, primary_model):
@@ -594,7 +571,7 @@ def plot_diagnostics(df, diag, out_path):
 
 
 # ═════════════════════════════════════════════════════════════════════════
-# 6. Main figure (unchanged)
+# 6. Main figure
 # ═════════════════════════════════════════════════════════════════════════
 
 def binned_means(x, y, n_bins=12):
@@ -640,7 +617,7 @@ def plot_main_figure(df, out_stub):
 
 
 # ═════════════════════════════════════════════════════════════════════════
-# 7. Output writers (unchanged)
+# 7. Output writers
 # ═════════════════════════════════════════════════════════════════════════
 
 def build_results_csv(models_named, exclusion_report, diag, wald_raw, wald_z, het_in, het_dn, out_path):

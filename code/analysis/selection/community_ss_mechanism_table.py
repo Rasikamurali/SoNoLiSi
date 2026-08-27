@@ -2,10 +2,9 @@
 community_ss_mechanism_table.py
 ---------------------------------
 Compact robustness table for the main social-selection pathway
-(community size only -- N=12/16/20). Same architecture as the contribution
-and perception-action-gap structural tables: does each pathway link retain
-its expected direction/strength as the community expands relative to the
-N=12 default?
+(community size only -- N=12/16/20): does each pathway link retain its
+expected direction/strength as the community expands relative to the N=12
+default?
 
 Reuses social_selection_feedback_analysis.py (ssfa)'s existing, unmodified
 main-paper specifications for the three pathway links -- no changes to
@@ -14,9 +13,9 @@ linear-probability specification:
   1. Undercontribution_t -> Evaluation_t          (ssfa.step5_analysis)
   2. Evaluation_t -> TieWeightChange_t             (ssfa.step3_validation)
   3. TieWeight_t -> SeedAccess_{t+1}               (ssfa.step7_analysis)
-ssfa.configure_tier("community", f"N{N}") (already built this session) sets
-MODEL_SPECS/N_AGENTS/GROUP_SIZE for each N; ssfa.build_core_datasets() then
-loads exactly the same edge_df/agent_df these three steps already expect.
+ssfa.configure_tier("community", f"N{N}") sets MODEL_SPECS/N_AGENTS/
+GROUP_SIZE for each N; ssfa.build_core_datasets() then loads exactly the
+same edge_df/agent_df these three steps already expect.
 
 Each N is fit as an independent model (there is no single pooled model
 spanning N=12/16/20 for this pathway, unlike the contribution/gap tables'
@@ -48,7 +47,10 @@ for _p in [_ANALYSIS_DIR] + [
 import social_selection_feedback_analysis as ssfa  # noqa: E402  (the existing, unmodified pathway specs)
 from model_specs import stars  # noqa: E402
 
-BASE = "/data3/rasimura/social-norm-evo"
+# BASE is the root of this release, computed from this file's own location
+# (three levels up from code/analysis/selection/) so paths below still work
+# if the release is moved or copied elsewhere.
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 COMMUNITY_OUT = f"{BASE}/figures/SUPPLEMENTARY_RESULTS/5_community_group_mcpr/community"
 
 PATHWAYS = [

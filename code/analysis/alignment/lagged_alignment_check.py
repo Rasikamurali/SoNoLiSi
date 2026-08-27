@@ -1,12 +1,8 @@
 """
 lagged_alignment_check.py
 --------------------------
-Item (d) of the perception/alignment consolidation (2026-08-24): lagged
-respecification of gap_based_alignment.py's primary result -- a supporting
-robustness check, not the headline number. Supersedes lagged_ar_regression.py
-(archived to code/analysis/archive/alignment/), which this file ports
-wholesale for the statistical logic; only tier dispatch, output-path
-routing, and the new community/group-size tiers are new.
+Lagged respecification of gap_based_alignment.py's primary result -- a
+supporting robustness check, not the headline number.
 
     contribution_{t+1} = b*IN_t + c'*DN_t + gamma*contribution_t + controls
 
@@ -21,8 +17,7 @@ before fitting. OLS, SEs clustered by run_id.
 Tiers (--tier flag, default 7b): 7b / s2 / pooled / community / group --
 same family lists and community/group data sources as gap_based_alignment.py
 (COMMUNITY_SOURCES / GROUP_N12_SOURCES / GROUP_N16_SOURCES are imported from
-there rather than redefined, since these two files are siblings in the same
-4-file consolidation, not independent scripts).
+there rather than redefined).
 
 Output: figures/SUPPORTING_MAIN_RESULTS/4_alignment_cross_checks/
 """
@@ -53,12 +48,17 @@ from gap_based_alignment import (  # noqa: E402
 
 warnings.filterwarnings("ignore")
 
-BASE = "/data3/rasimura/social-norm-evo"
+# BASE is the root of this release, computed from this file's own location
+# (three levels up from code/analysis/alignment/) so paths below still work
+# if the release is moved or copied elsewhere.
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 PUBLISH_ROOT = f"{BASE}/figures/SUPPORTING_MAIN_RESULTS/4_alignment_cross_checks"
 EXPORT_ROOT = f"{BASE}/code/analysis/exports"
 
 
 def formula_for(family_ref):
+    # z-scored autoregressive spec: next-round contribution regressed on
+    # this round's IN, DN, and contribution itself (gamma), plus FE controls.
     return (
         "contribution_lead1_z ~ IN_z + DN_z + contribution_z "
         '+ C(condition, Treatment(reference="BASELINE")) '
@@ -67,7 +67,7 @@ def formula_for(family_ref):
 
 
 def fit(df, family_ref):
-    df = add_lags(df)
+    df = add_lags(df)  # adds contribution_lead1 (each agent's next-round contribution)
     df = df.dropna(subset=["contribution_lead1", "IN", "DN", "contribution"]).copy()
     df = zscale(df, ["IN", "DN", "contribution", "contribution_lead1"])
     model = smf.ols(formula_for(family_ref), data=df).fit(
@@ -176,7 +176,7 @@ def run_structural_tier(axis):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Lagged autoregressive respecification (item d).")
+    parser = argparse.ArgumentParser(description="Lagged autoregressive respecification.")
     parser.add_argument("--tier", choices=["7b", "s2", "13b", "70b", "pooled", "community", "group", "all"],
                          default="7b")
     args = parser.parse_args()

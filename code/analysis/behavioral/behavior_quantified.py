@@ -1,33 +1,15 @@
 """
 behavior_quantified.py
 ----------------------
-OLS pairwise contrasts with seed-clustered SEs, Wald test, and Bonferroni
-correction, on contribution only, all rounds (round included as a linear
-covariate).
+Q1 (within-model): OLS + Wald test on the paper's 5 main mechanism
+condition pairs (see PAPER_PAIRS), round as covariate, seed-clustered SEs,
+Bonferroni over 5. Q2 (per-condition): same, over all 6 model pairs.
+Sign convention: "A -> B" reports coef(B)-coef(A) (positive = B higher).
 
-  Q1 — within-model:  5 condition pairs per model, round as covariate
-  Q2 — cross-model:   per condition, all C(4,2)=6 model pairs, round as covariate
-
-Q1 condition pairs (within each model):
-  a) Pure Baseline  → Baseline
-  b) Baseline       → No Discussion
-  c) Baseline       → No Selection
-  d) No Selection   → Full
-  e) No Discussion  → Full
-
-Q2 model pairs (within each condition): all C(4,2) = 6 pairs across GPT, Llama, Mistral, Qwen
-
-Clustering unit: seed (10 seeds per model × condition).
-Bonferroni correction: over 5 pairs (Q1) or 6 pairs (Q2).
-
-Sign convention: for a labeled pair "A -> B" (Q1) or "A vs. B" (Q2), the
-reported diff is coef(B) - coef(A), so a positive coefficient means the
-second-listed condition/model is higher (e.g. "Baseline -> Full: +1.2" reads
-as "Full is 1.2 higher than Baseline"). Flipped 2026-08-17 from the earlier
-coef(A) - coef(B) convention, which made the common case (later-listed
-condition/model doing better) render as a confusing negative number.
-
-Output: figures/2026-03-22/paper_stats/
+Inputs: results/{model}/local/seed{N}/log_*.json (fallback:
+code/results/{model}/local/additional_runs/...).
+Outputs (figures/2026-03-22/paper_stats/): q1/q2_all_rounds*.csv +
+q1/q2_contribution*.tex.
 """
 
 import argparse
@@ -44,11 +26,15 @@ from scipy.stats import norm as _norm
 warnings.filterwarnings("ignore")
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-RESULTS   = os.getenv("SNLS_RESULTS_DIR", "/data3/rasimura/social-norm-evo/results")
-OUT_DIR   = "/data3/rasimura/social-norm-evo/figures/2026-03-22/paper_stats"
+# BASE is the root of this release, computed from this file's own location
+# (three levels up from code/analysis/behavioral/) so paths below still work
+# if the release is moved or copied elsewhere.
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+RESULTS   = os.getenv("SNLS_RESULTS_DIR", f"{BASE}/results")
+OUT_DIR   = f"{BASE}/figures/2026-03-22/paper_stats"
 # Fallback base for seeds not found under RESULTS (e.g. seeds 53-92 live under
 # code/results/{model}/{variant}/additional_runs/seed{s}/, not results/{model}/{variant}/seed{s}/).
-ADDITIONAL_RUNS_RESULTS = "/data3/rasimura/social-norm-evo/code/results"
+ADDITIONAL_RUNS_RESULTS = f"{BASE}/code/results"
 
 MODELS     = ["gpt", "llama", "mistral", "qwen"]
 VARIANT    = "local"
@@ -69,6 +55,10 @@ PAPER_PAIRS = [
 # ─── Data loading ─────────────────────────────────────────────────────────────
 
 def load_latest_log(model, seed, condition):
+    # Finds the raw log file for one (model, seed, condition) combination.
+    # Looks in the main results folder first, then in the "additional_runs"
+    # fallback folder (used for extra seeds added later). If more than one
+    # log file matches, the most recently written one wins.
     patterns = [
         os.path.join(RESULTS, model, VARIANT, f"seed{seed}", "log_*.json"),
         os.path.join(ADDITIONAL_RUNS_RESULTS, model, VARIANT, "additional_runs",
@@ -90,6 +80,8 @@ def load_latest_log(model, seed, condition):
 
 def build_dataframe():
     """Long-format DataFrame: one row per (model, condition, seed, round, agent)."""
+    # Loads every model/seed/condition's log file and flattens each agent's
+    # contribution in each round into its own row.
     rows = []
     for model in MODELS:
         for seed in SEEDS:
@@ -117,6 +109,8 @@ def build_dataframe():
 
 def fit_ols(df, formula, cluster_col="seed"):
     """OLS with HC-robust SEs clustered at cluster_col level."""
+    # Fits the regression and returns None (with a warning printed) instead
+    # of raising, so one failed fit doesn't stop the whole script.
     try:
         return smf.ols(formula, data=df).fit(
             cov_type="cluster", cov_kwds={"groups": df[cluster_col]}
@@ -127,21 +121,23 @@ def fit_ols(df, formula, cluster_col="seed"):
 
 
 def wald_contrast(result, key_a, key_b):
-    """
-    Wald test for coef[key_a] - coef[key_b].
-    Either key may be None (reference level → implicit 0).
-    Returns (diff, se, z, p).
-    Call sites pass (key_B, key_A) so diff = coef(B) - coef(A) — see module
-    docstring's sign-convention note.
-    """
+    """Wald test for coef[key_a]-coef[key_b] (either may be None -> 0).
+    Returns (diff, se, z, p); call sites pass (key_B, key_A) per the
+    module's sign convention."""
     params = result.params
     cov    = result.cov_params()
 
+    # Small helpers: a coefficient/variance/covariance is treated as 0 if
+    # its key is missing, which happens for the reference condition/model
+    # (statsmodels doesn't give the reference level its own coefficient,
+    # since by construction it's the baseline everything else is compared to).
     def _c(k):  return params[k]         if k and k in params.index else 0.0
     def _v(k):  return cov.loc[k, k]     if k and k in cov.index   else 0.0
     def _cv(a, b):
         return cov.loc[a, b] if a and b and a in cov.index and b in cov.columns else 0.0
 
+    # Standard formula for the variance of a difference of two (possibly
+    # correlated) estimates: Var(A-B) = Var(A) + Var(B) - 2*Cov(A,B).
     diff = _c(key_a) - _c(key_b)
     se   = np.sqrt(_v(key_a) + _v(key_b) - 2 * _cv(key_a, key_b))
     z    = diff / se if se > 0 else np.nan
@@ -151,12 +147,16 @@ def wald_contrast(result, key_a, key_b):
 
 def cond_param(cond, ref=None):
     """Statsmodels Treatment-contrast parameter name for a condition level."""
+    # Builds the exact coefficient name statsmodels assigns to a condition
+    # dummy variable (or returns None if this condition IS the reference
+    # level, which has no dummy of its own).
     if ref is None: ref = REF_COND
     return None if cond == ref else f"C(condition, Treatment('{ref}'))[T.{cond}]"
 
 
 def model_param(mdl, ref=None):
     """Statsmodels Treatment-contrast parameter name for a model level."""
+    # Same idea as cond_param(), but for the model-family dummy variable.
     if ref is None: ref = REF_MODEL
     return None if mdl == ref else f"C(model, Treatment('{ref}'))[T.{mdl}]"
 
@@ -164,13 +164,12 @@ def model_param(mdl, ref=None):
 # ─── Q1: Within-model condition contrasts ─────────────────────────────────────
 
 def run_q1(df):
-    """
-    Per model: OLS with seed-clustered SEs.
-    contribution ~ C(condition) + round   (average effect across all rounds)
-    Returns DataFrame with one row per (model, pair).
-    """
+    """Per model: contribution ~ C(condition) + round, seed-clustered SEs.
+    One row per (model, pair)."""
     formula = "contribution ~ C(condition, Treatment('{ref}')) + round".format(ref=REF_COND)
 
+    # Fit one regression per model (not pooled across models), then read
+    # off each of the 5 paper contrasts from that one fitted model.
     rows = []
     for model in MODELS:
         mdf = df[df["model"] == model].copy()
@@ -182,6 +181,7 @@ def run_q1(df):
             rows.append({"model": model, "cond_A": cA, "cond_B": cB,
                          "diff": diff, "se": se, "z": z, "p": p})
 
+    # Bonferroni-correct across the 5 contrasts tested within each model.
     out = pd.DataFrame(rows)
     n   = len(PAPER_PAIRS)
     out["p_bonf"] = (out["p"] * n).clip(upper=1.0)
@@ -194,13 +194,12 @@ def run_q1(df):
 # ─── Q2: Cross-model comparisons per condition ────────────────────────────────
 
 def run_q2(df):
-    """
-    Per condition: OLS with seed-clustered SEs.
-    contribution ~ C(model) + round
-    Returns DataFrame with one row per (condition, model pair).
-    """
+    """Per condition: contribution ~ C(model) + round, seed-clustered SEs.
+    One row per (condition, model pair)."""
     formula = "contribution ~ C(model, Treatment('{ref}')) + round".format(ref=REF_MODEL)
 
+    # Fit one regression per condition (not pooled across conditions), then
+    # read off every pairwise model comparison from that one fitted model.
     model_pairs = list(combinations(MODELS, 2))
     rows = []
     for cond in CONDITIONS:
@@ -213,6 +212,7 @@ def run_q2(df):
             rows.append({"condition": cond, "model_A": mA, "model_B": mB,
                          "diff": diff, "se": se, "z": z, "p": p})
 
+    # Bonferroni-correct across all model pairs tested within each condition.
     out = pd.DataFrame(rows)
     n   = len(model_pairs)
     out["p_bonf"] = (out["p"] * n).clip(upper=1.0)
@@ -257,10 +257,12 @@ CAPTION_NOTE = (r"Cells show $\hat{\beta}$ (SE) for the second-listed condition/
 
 
 def _cell(diff, se, sig):
+    # Formats one table cell as "estimate (standard error)" plus significance stars.
     return f"{diff:.2f} ({se:.2f}){SIG_TEX[sig]}"
 
 
 def _save_tex(lines, path):
+    # Writes a list of LaTeX source lines to a file, creating the folder if needed.
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -324,6 +326,7 @@ def make_q2_latex(q2_df, suffix=""):
 
 
 def save_csv(df, path):
+    # Writes a DataFrame to CSV, creating the destination folder if needed.
     os.makedirs(os.path.dirname(path), exist_ok=True)
     df.to_csv(path, index=False)
     print(f"  Saved → {path}")

@@ -1,28 +1,22 @@
 """
 model_specs.py
 ---------------
-Canonical registry + shared data-loading utilities for the local-variant
-analysis pipeline: which results directory, data variant, and seed list
-each of the 10 model families (GPT + 3x7B + 3x13B/14B + 2x70B/72B +
-GPT-5-mini) uses, plus the IN/DN perception-and-contribution panel loader
-built on top of it. GPT-5-mini was added 2026-08-18 for the S2 supplementary
-replication (GPT-5-mini + Llama-70B + Mistral-13B + Qwen-72B) — see
-PAPER_RESULTS_INVENTORY.md.
+Shared registry + data-loading helpers imported by every other script in
+this release, so the model list, paths, and seed ranges stay in one place.
 
-Extracted from sobel_mediation.py on 2026-08-17 when that script (whose own
-Sobel-mediation-test analysis has been superseded — see
-code/analysis/perception/mediation_llama_mistral_qwen.py) was archived to
-archive/sobel_mediation.py. MODEL_SPECS/CONDITIONS/BASE and the load_all/
-add_lags/zscale/stars helpers had all become shared dependencies for several
-unrelated scripts (social_selection_feedback_analysis.py,
-selection_mechanism_llama_mistral_qwen.py, discussion_talk_vs_behavior.py,
-build_agent_round_panel.py, exclusion_diagnostics.py,
-gap_based_alignment_test.py, discussion_mechanism_analysis.py,
-lagged_ar_regression.py), and this file's presence at code/analysis/ is also
-used by many scripts throughout code/analysis/ as a directory anchor (walk
-up parent directories until this file is found) to locate ANALYSIS_DIR for
-sys.path setup — so this module, not sobel_mediation.py, must stay at
-code/analysis/ going forward.
+  MODEL_SPECS: one row per model family (10 total: GPT + 3 families each
+    at 7B/13B-14B/70B-72B + GPT-5-mini), with results dir, variant, seeds.
+  CONDITIONS: the 4 main experimental conditions.
+  load_all(): flattens every family's raw JSON logs into one table, one
+    row per (family, condition, seed, round, agent), with contribution
+    and the two elicited expectations (IN = normative, DN = empirical).
+  add_lags()/zscale()/stars()/SIG_TEX: shared formatting/transform helpers.
+
+Inputs: results/ and code/results/ (see MODEL_SPECS). Writes nothing.
+
+Also a directory landmark: other scripts walk up their own path to find
+this file, then add every sibling subfolder to sys.path -- so it must
+stay directly inside code/analysis/.
 """
 
 import os
@@ -30,7 +24,10 @@ import json
 import glob
 import pandas as pd
 
-BASE    = "/data3/rasimura/social-norm-evo"
+# BASE is the root of this release (the folder containing "code/"), computed
+# from this file's own location so the release still works if it's moved or
+# copied elsewhere -- it does not depend on any fixed install path.
+BASE    = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 OUT_DIR = f"{BASE}/figures/2026-03-22/paper_stats"
 
 MODEL_SPECS = [
@@ -51,12 +48,15 @@ CONDITIONS = ["BASELINE", "NO_SELECTION", "NO_DISCUSSION", "FULL"]
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def stars(p):
+    # Converts a p-value into the usual significance-star notation
+    # (*** < .001, ** < .01, * < .05, dagger < .10, nothing otherwise).
     if p < 0.001: return "***"
     if p < 0.01:  return "**"
     if p < 0.05:  return "*"
     if p < 0.10:  return "†"
     return ""
 
+# LaTeX versions of the same stars, for building table cells directly.
 SIG_TEX = {
     "***": r"$^{***}$", "**": r"$^{**}$",
     "*":   r"$^{*}$",   "†":  r"$^{\dagger}$", "": "",
@@ -67,11 +67,17 @@ SIG_TEX = {
 
 def load_all():
     """One row per (family, condition, seed, round, agent) with contribution, IN, DN."""
+    # Walk every model family, seed, and condition listed in MODEL_SPECS,
+    # open each run's raw JSON log, and flatten it into one long table with
+    # one row per agent per round -- this is the common starting point most
+    # of the other analysis scripts build on.
     rows = []
     for model_key, family, results_dir, variant, seeds in MODEL_SPECS:
         for seed in seeds:
             pattern = os.path.join(results_dir, model_key, variant,
                                    f"seed{seed}", "log_*.json")
+            # A run can have more than one log file on disk (e.g. from a
+            # rerun); keep only the latest one per condition.
             cond_data = {}
             for path in sorted(glob.glob(pattern)):
                 try:
@@ -91,6 +97,9 @@ def load_all():
                     percs = {int(k): v
                              for k, v in (r.get("perceptions") or {}).items()}
                     for aid, perc in percs.items():
+                        # Skip an agent-round if any of the three values we
+                        # need (actual contribution, normative expectation,
+                        # empirical expectation) is missing.
                         if not perc:
                             continue
                         actual = contribs.get(int(aid))
@@ -114,6 +123,9 @@ def load_all():
 
 
 def add_lags(df):
+    # Adds "contribution_lead1": each agent's contribution in the NEXT
+    # round, aligned onto the current round's row. Used to model how an
+    # agent's contribution changes from one round to the next.
     df = df.sort_values(["run_id", "agent_id", "round"]).copy()
     grp = df.groupby(["run_id", "agent_id"])
     df["contribution_lead1"] = grp["contribution"].shift(-1)
@@ -121,6 +133,8 @@ def add_lags(df):
 
 
 def zscale(df, cols):
+    # Standardizes each listed column to mean 0, standard deviation 1
+    # (adds a new "<col>_z" column; the original column is left unchanged).
     for col in cols:
         df[col + "_z"] = (df[col] - df[col].mean()) / df[col].std()
     return df
