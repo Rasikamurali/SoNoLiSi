@@ -15,11 +15,16 @@ import pandas as pd
 
 # Reorg (2026-08-11): see build_pattern_tables.py for why this anchor exists.
 _ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
-while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
     _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
 
-RUN_DIR = os.path.join(_ANALYSIS_DIR, "exports", "gpt5_annotation_pilot", "full_corpus_run")
-IN_PATH = os.path.join(RUN_DIR, "8_example_discussions_annotated.csv")
+# 2026-08-17: repointed at the per-turn, row-level-shot, corrected-codebook run
+# (the earlier full_corpus_run/8_example_discussions_annotated.csv was per-group
+# mode with discussion-level shots and the pre-fix codebook -- see
+# project_social_norm_evo_discourse_coding_pipeline memory for why per-turn/
+# row-shots is the validated combination, 93.2% vs. 81.8% held-out accuracy).
+RUN_DIR = os.path.join(_ANALYSIS_DIR, "exports", "gpt5_annotation_pilot", "full_corpus_annotated")
+IN_PATH = os.path.join(RUN_DIR, "8_example_rows_annotated.csv")
 
 ROUND_RE = re.compile(r"_R(\d+)_G\d+$")
 PERIOD_ORDER = ["Early", "Middle", "Late"]
@@ -49,25 +54,31 @@ def trend_str(sub: pd.DataFrame, col: str, value: str, arrow: str, pct_sign: str
 
 def build_rows(df: pd.DataFrame, arrow: str = " → ", pct_sign: str = "%") -> dict:
     followers = df[df.turn != 0]
-    labeled_dir = df[df.LLM_Directionality.notna()]
+    labeled_dir = df[df.LLM_Directionality != ""]
 
     rows = {}
     for fam in FAMILY_ORDER:
+        fam_followers = followers[followers.family == fam]
+        fam_dir = labeled_dir[labeled_dir.family == fam]
         rows[fam] = {
-            "Counterproposal rate": trend_str(followers[followers.family == fam], "LLM_Speech_Act", "Counterproposal", arrow, pct_sign),
-            "Maintenance rate": trend_str(labeled_dir[labeled_dir.family == fam], "LLM_Directionality", "Maintain", arrow, pct_sign),
-            "Agreement rate": trend_str(followers[followers.family == fam], "LLM_Agreement", "Yes", arrow, pct_sign),
+            "Counterproposal rate": trend_str(fam_followers, "LLM_Speech_Act", "Counterproposal", arrow, pct_sign),
+            "Agreement rate": trend_str(fam_followers, "LLM_Agreement", "Yes", arrow, pct_sign),
+            "Maintenance rate": trend_str(fam_dir, "LLM_Directionality", "Maintain", arrow, pct_sign),
+            "Increase rate": trend_str(fam_dir, "LLM_Directionality", "Increase", arrow, pct_sign),
+            "Decrease rate": trend_str(fam_dir, "LLM_Directionality", "Decrease", arrow, pct_sign),
         }
     rows["Overall"] = {
         "Counterproposal rate": trend_str(followers, "LLM_Speech_Act", "Counterproposal", arrow, pct_sign),
-        "Maintenance rate": trend_str(labeled_dir, "LLM_Directionality", "Maintain", arrow, pct_sign),
         "Agreement rate": trend_str(followers, "LLM_Agreement", "Yes", arrow, pct_sign),
+        "Maintenance rate": trend_str(labeled_dir, "LLM_Directionality", "Maintain", arrow, pct_sign),
+        "Increase rate": trend_str(labeled_dir, "LLM_Directionality", "Increase", arrow, pct_sign),
+        "Decrease rate": trend_str(labeled_dir, "LLM_Directionality", "Decrease", arrow, pct_sign),
     }
     return rows
 
 
 def to_markdown(rows: dict) -> str:
-    cols = ["Counterproposal rate", "Maintenance rate", "Agreement rate"]
+    cols = ["Counterproposal rate", "Agreement rate", "Maintenance rate", "Increase rate", "Decrease rate"]
     lines = [
         "| Model family | " + " | ".join(cols) + " |",
         "| --- | " + " | ".join(["---:"] * len(cols)) + " |",
@@ -80,12 +91,12 @@ def to_markdown(rows: dict) -> str:
 
 
 def to_latex(rows: dict) -> str:
-    cols = ["Counterproposal rate", "Maintenance rate", "Agreement rate"]
+    cols = ["Counterproposal rate", "Agreement rate", "Maintenance rate", "Increase rate", "Decrease rate"]
     lines = [
         r"\begin{table}[ht]",
         r"\centering",
         r"\small",
-        r"\begin{tabular}{lccc}",
+        r"\begin{tabular}{lccccc}",
         r"\toprule",
         " & " + " & ".join(cols) + r" \\",
         r"\midrule",
@@ -102,11 +113,12 @@ def to_latex(rows: dict) -> str:
         r"\caption{Discussion-mechanism trends by model family, Early (rounds 1-7) "
         r"$\rightarrow$ Middle (rounds 8-14) $\rightarrow$ Late (rounds 15-20). "
         r"Counterproposal rate and agreement rate are shares of follower turns "
-        r"(turn $>0$ within a group's round); maintenance rate is the share of "
-        r"turns with a directionality label. LLM-coded (gpt-5.4-mini, per-group "
-        r"annotation, 8 cross-family hand-coded shot examples); see "
-        r"Section~\ref{sec:annotation-validation} for accuracy/$\kappa$ against "
-        r"hand-coded ground truth.}",
+        r"(turn $>0$ within a group's round); maintenance/increase/decrease rates "
+        r"are shares of directionality-labeled turns. LLM-coded "
+        r"(gpt-5.4-mini, per-turn annotation, 8 row-level hand-coded shot examples "
+        r"from a second coder's blind recode); see "
+        r"Section~\ref{sec:annotation-validation} for accuracy/$\kappa$/$\alpha$ "
+        r"against hand-coded ground truth (93.2\% row-exact-match on held-out rows).}",
         r"\label{tab:family_trend}",
         r"\end{table}",
     ]
@@ -114,7 +126,10 @@ def to_latex(rows: dict) -> str:
 
 
 def main():
-    df = pd.read_csv(IN_PATH)
+    # keep_default_na=False: "N/A" is a real Human_Agreement/LLM_Agreement
+    # category value, not a missing-value marker -- pandas' default would
+    # silently collapse it into NaN otherwise.
+    df = pd.read_csv(IN_PATH, keep_default_na=False)
     df["round_n"] = df.discussion_id.apply(recover_round)
     df["period_n"] = df.round_n.apply(period_of)
 

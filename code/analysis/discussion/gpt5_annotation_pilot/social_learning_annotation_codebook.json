@@ -4,48 +4,55 @@
     "Human_Speech_Act": {
       "values": {
         "Proposal": {
-          "definition": "Agent recommends a contribution level for the current round. A proposal may be explicitly based on previous-round behavior or averages."
+          "definition": "Agent recommends a specific contribution level for the current round, and that level matches the FIRST contribution level proposed by anyone in this round's discussion (the first turn is always a Proposal, since there is nothing earlier to compare it to; a later turn that returns to the same level as the first proposal is also a Proposal)."
         },
         "Counterproposal": {
-          "definition": "Agent recommends a contribution level that differs from a contribution level already proposed by another agent in the same current-group discussion."
+          "definition": "Agent recommends a specific contribution level for the current round that DIFFERS from the first contribution level proposed by anyone in this round's discussion."
         }
-      }
+      },
+      "note": "Tag Speech_Act on every turn that recommends a specific contribution level, not only turns introducing a brand-new number -- always compare the recommended level to the discussion's FIRST proposal, not to the immediately preceding turn: same level as the first proposal -> Proposal, different level -> Counterproposal. Example: if turns propose 4, 5, 4, 5 in order, they are tagged Proposal, Counterproposal, Proposal, Counterproposal (turn 3 matches the first proposal's 4, so it is a Proposal again, even though it differs from turn 2's 5). Leave Speech_Act unmarked (null) only when the turn does not recommend any specific contribution level at all -- this is rare."
     },
     "Human_Reference": {
       "values": {
         "Yes": {
-          "definition": "Explicitly invokes prior-round observed contribution behavior, such as previous contributions, group averages, or contribution trends/patterns. A numeric value is not required."
+          "definition": "Explicitly invokes prior-round observed contribution behavior -- previous contributions, group averages, contribution trends/patterns, or established/observed norms. A numeric value is not required."
         },
         "No": {
           "definition": "Does not explicitly invoke prior-round observed contribution behavior. Merely mentioning or quoting another agent in the current discussion does not count."
         }
-      }
+      },
+      "note": "Common signal terms that indicate Reference = Yes: \"average contribution of X,\" \"consistency,\" \"maintain(ing) group contributions,\" \"observed norms.\" None of these need an exact number attached -- describing a stable pattern or standing norm is enough."
     },
     "Human_Agreement": {
       "values": {
         "Yes": {
-          "definition": "Explicitly endorses another agent's recommendation or position in the current discussion."
+          "definition": "Implicit or explicit mention of group consensus -- signals alignment with what the group (or another agent) is converging on, whether or not it names a specific agent."
         },
         "No": {
-          "definition": "Does not explicitly endorse another agent's recommendation or position."
+          "definition": "Agent disagrees with another agent from the group, or with the group/group consensus itself."
         },
         "Mixed/Qualified": {
-          "definition": "Expresses partial endorsement but qualifies, modifies, or departs from the endorsed recommendation."
+          "definition": "Both agreement and disagreement are shown in the same turn (e.g. endorses part of the group's position while pushing back on another part)."
+        },
+        "N/A": {
+          "definition": "No explicit or implicit mention of agreement or disagreement is made."
         }
-      }
+      },
+      "note": "Agreement is about endorsing or departing from what other agents / the group said in THIS round's discussion -- not about prior-round behavior, which is Reference instead. It doesn't require a literal \"I agree\": implicit signals like \"given the group consensus\" count too, and don't need to name a specific agent. If a turn proposes something different with no agreement/disagreement signal either way, use N/A."
     },
     "Human_Directionality": {
       "values": {
         "Increase": {
-          "definition": "The alternative recommended contribution is higher than the proposal it challenges."
+          "definition": "The recommended contribution level is higher than the reference point it is compared against (see note for what the reference point is)."
         },
         "Decrease": {
-          "definition": "The alternative recommended contribution is lower than the proposal it challenges."
+          "definition": "The recommended contribution level is lower than the reference point it is compared against."
         },
         "Maintain": {
-          "definition": "The proposed contribution value is to be maintained in reference to the referenced contribution."
+          "definition": "The recommended contribution level is the same as the reference point it is compared against."
         }
-      }
+      },
+      "note": "Tag Directionality whenever Speech_Act is tagged (Proposal or Counterproposal); leave it unmarked (null) whenever Speech_Act is unmarked. The reference point depends on which turn this is: for the FIRST proposal in the discussion, compare its level to the previous round's observed contribution/average. For every turn after the first (whether tagged Proposal, because it matches the first proposal's level, or Counterproposal, because it differs), compare its level to the discussion's first proposal, NOT to the immediately preceding turn."
     }
   },
   "coding_examples": [
@@ -69,11 +76,14 @@
     },
     {
       "labels": [
-        "Agreement",
-        "No Reference"
+        "Counterproposal",
+        "Increase",
+        "Agreement = Yes",
+        "Reference = No"
       ],
       "text": "I agree with Agent 3 that we should contribute 5.",
-      "explanation": "Agreement = Yes; merely citing Agent 3 in the current discussion does not make Reference = Yes."
+      "context": "Agent 1 proposed 4 first in this round's discussion.",
+      "explanation": "Speech_Act and Agreement are independent -- this turn both recommends a level (5, which differs from the first proposal of 4, so Speech_Act = Counterproposal and Directionality = Increase) AND signals agreement with Agent 3 (Agreement = Yes). Merely citing Agent 3 in the current discussion does not make Reference = Yes -- Reference is about prior-ROUND history, not about other agents' turns this round."
     }
   ]
 }

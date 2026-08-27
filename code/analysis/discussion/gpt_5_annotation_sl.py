@@ -18,6 +18,14 @@ condition (predictions filled into LLM_* columns, same shape as the input
 template) plus condition_comparison_summary.csv (per-field accuracy/kappa
 and row-level exact-match rate by condition, to see whether accuracy rises
 with more examples and where it plateaus).
+
+All hand-coded CSVs are read with keep_default_na=False (2026-08-17 fix):
+pandas' default read_csv treats the literal string "N/A" as a missing
+value, which would silently corrupt Human_Agreement's real "N/A" category
+(added when the codebook was revised) into an indistinguishable blank --
+row_ground_truth()/score() already handle blank-as-empty-string via their
+existing `pd.isna(val) or val == ""` checks, so this is a pure bug fix,
+not a behavior change for genuinely-blank cells.
 """
 
 from __future__ import annotations
@@ -25,8 +33,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import krippendorff
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -55,7 +67,7 @@ FIXED_TEMPERATURE_MODELS = {"gpt-5-mini", "gpt-5-mini-2025-08-01", "gpt-5.4-mini
 # that's no longer true, so it's anchored explicitly here instead.
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _ANALYSIS_DIR = _THIS_DIR
-while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
     _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
 
 PILOT_DIR = os.path.join(_THIS_DIR, "gpt5_annotation_pilot")
@@ -70,14 +82,19 @@ OUT_DIR = os.path.join(_ANALYSIS_DIR, "exports", "gpt5_annotation_pilot")
 # not part of the analysis going forward.
 FIELDS = ["Speech_Act", "Reference", "Agreement", "Directionality"]
 
-# The hand-coded sample leaves a field blank instead of writing "No" when
-# a value doesn't hold. The codebook defines an explicit "No" for
-# Reference/Agreement, and the sample never once writes "No" out for
-# those two fields -- so blank is treated as "No" there for scoring.
-# Speech_Act/Directionality have no "does not apply" value in the codebook,
-# so blank there is treated as null/not-applicable.
-# ASSUMPTION: check this reading against intent before trusting the scores.
-BLANK_MEANS_NO = {"Reference", "Agreement"}
+# The hand-coded sample leaves a field blank rather than writing out a value
+# when nothing applies. Reference has no "does not apply" value in the
+# codebook (only Yes/No), and the sample never once writes "No" for it, so
+# blank is treated as "No" there. Agreement's codebook now defines an
+# explicit N/A ("no explicit or implicit mention of agreement or
+# disagreement"), distinct from No ("disagrees") -- updated 2026-08-17 when
+# the codebook itself was revised to add N/A. Checked against the full
+# stratified_sample_hand_coded.csv: Agreement is 212 Yes / 0 explicit No /
+# 101 blank / 6 Mixed-Qualified -- zero explicit "No" instances anywhere,
+# which supports blank meaning "no signal" (N/A) rather than active
+# disagreement (No). Speech_Act/Directionality have no "does not apply"
+# value in the codebook, so blank there is treated as null/not-applicable.
+BLANK_FALLBACK = {"Reference": "No", "Agreement": "N/A"}
 
 # Discussions reserved as few-shot exemplars, never scored -- capped at 12
 # of the 20 total so a fixed 8-discussion (32-turn) eval set can be held
@@ -130,7 +147,33 @@ SHOT_CONDITIONS = [
     {"name": "4_example_discussions", "kind": "pool", "n_discussions": 4},
     {"name": "8_example_discussions", "kind": "pool", "n_discussions": 8},
     {"name": "12_example_discussions", "kind": "pool", "n_discussions": 12},
+    {"name": "8_example_rows", "kind": "rows"},
 ]
+
+# 8 individual (discussion_id, turn) shots, hand-picked from
+# exports/human_annotation_stratified_sample/stratified_sample_hand_coded_haewoon_blind_recode.csv
+# via greedy (field, value) coverage over the 2026-08-17 revised codebook (compare-to-
+# first-proposal Speech_Act/Directionality, N/A-capable Agreement) -- covers all 11
+# (field, value) pairs present in that 52-row set. Row-level, not discussion-level,
+# shots: each shows just one target turn (with its own discussion-so-far context) plus
+# its correct labels, instead of a whole discussion's worth of turns per shot -- ~4x
+# more shot-budget-efficient. Validated 2026-08-17: 44/44 rows never used as a shot
+# scored 93.2% row-exact-match (41/44), with all 3 misses on Speech_Act specifically
+# (see exports/gpt5_annotation_pilot/haewoon_row_shots_44held/).
+SHOT_POOL_ROWS_HAEWOON = [
+    ("GPT_s47_FULL_R05_G1", 0),
+    ("GPT_s47_FULL_R05_G1", 2),
+    ("Llama-7B_s46_FULL_R02_G2", 1),
+    ("GPT_s47_FULL_R05_G1", 1),
+    ("GPT_s47_FULL_R05_G1", 3),
+    ("Mistral-7B_s52_NO_SELECTION_R07_G0", 0),
+    ("Qwen-7B_s50_FULL_R02_G1", 0),
+    ("GPT_s51_NO_SELECTION_R09_G0", 0),
+]
+ROW_SHOT_SOURCE_PATH = os.path.join(
+    _ANALYSIS_DIR, "exports", "human_annotation_stratified_sample",
+    "stratified_sample_hand_coded_haewoon_blind_recode.csv",
+)
 
 
 # ============================================================
@@ -166,6 +209,8 @@ def build_codebook_prompt(codebook: dict, per_group: bool = False) -> str:
         lines.append(f"## {short}")
         for value, vspec in spec["values"].items():
             lines.append(f'- "{value}": {vspec["definition"]}')
+        if spec.get("note"):
+            lines.append(spec["note"])
         lines.append("")
     if per_group:
         lines.append(
@@ -179,7 +224,7 @@ def build_codebook_prompt(codebook: dict, per_group: bool = False) -> str:
         lines.append(
             "Respond with a single JSON object with exactly these keys: "
             + ", ".join(f'"{f}"' for f in FIELDS)
-            + ', "Notes". Use null for any of the five label fields that does not apply to the '
+            + ', "Notes". Use null for any of the four label fields that does not apply to the '
             "target turn. \"Notes\" is a one-sentence rationale for your labels."
         )
     return "\n".join(lines)
@@ -214,7 +259,7 @@ def row_ground_truth(row: pd.Series) -> dict:
     for f in FIELDS:
         val = row.get(f"Human_{f}")
         if pd.isna(val) or val == "":
-            val = "No" if f in BLANK_MEANS_NO else None
+            val = BLANK_FALLBACK.get(f)
         labels[f] = val
     return labels
 
@@ -228,8 +273,26 @@ def format_pool_discussion_example(df: pd.DataFrame, discussion_id: str) -> str:
     return "\n".join(lines)
 
 
+def format_pool_row_example(df: pd.DataFrame, discussion_id: str, turn: int) -> str:
+    """
+    Single-turn shot example: same discussion-so-far + target-turn shape as
+    build_user_prompt() (what the model sees at eval time), with the correct
+    answer appended -- as opposed to format_pool_discussion_example(), which
+    shows every turn of a whole discussion (and so uses up ~4x the row budget
+    per shot).
+    """
+    d = discussion_transcript(df, discussion_id, upto_turn=turn)
+    row = d[d["turn"] == turn].iloc[0]
+    gt = row_ground_truth(row)
+    return (
+        f"{format_transcript_lines(d)}\n\n"
+        f"TARGET turn: Turn {turn} -- Agent {row['agent']}.\n"
+        f"Correct labels: {json.dumps(gt)}"
+    )
+
+
 def build_shots_block(condition: dict, codebook: dict, pool_df: pd.DataFrame,
-                       shot_discussion_ids: list[str]) -> str:
+                       shot_discussion_ids: list[str], shot_rows: list[tuple] | None = None) -> str:
     kind = condition["kind"]
     if kind == "none":
         return ""
@@ -239,6 +302,10 @@ def build_shots_block(condition: dict, codebook: dict, pool_df: pd.DataFrame,
         chosen = shot_discussion_ids[: condition["n_discussions"]]
         blocks = [format_pool_discussion_example(pool_df, did) for did in chosen]
         return "### Example discussions (hand-coded)\n\n" + "\n\n".join(blocks)
+    if kind == "rows":
+        rows = shot_rows if shot_rows is not None else SHOT_POOL_ROWS_HAEWOON
+        blocks = [format_pool_row_example(pool_df, did, turn) for did, turn in rows]
+        return "### Example turns (hand-coded)\n\n" + "\n\n".join(blocks)
     raise ValueError(f"unknown shot kind: {kind}")
 
 
@@ -267,6 +334,8 @@ def build_group_user_prompt(d: pd.DataFrame) -> str:
 # ============================================================
 
 _usage: dict = defaultdict(int)
+_usage_lock = threading.Lock()  # _usage["x"] += n is a read-modify-write, not atomic
+                                 # under the GIL -- needed once calls run concurrently.
 
 
 def annotate(system_prompt: str, user_prompt: str, model: str) -> dict:
@@ -284,8 +353,9 @@ def annotate(system_prompt: str, user_prompt: str, model: str) -> dict:
         resp = client.chat.completions.create(**call_kwargs)
         parsed = json.loads(resp.choices[0].message.content)
         u = resp.usage
-        _usage["prompt_tokens"] += u.prompt_tokens
-        _usage["completion_tokens"] += u.completion_tokens
+        with _usage_lock:
+            _usage["prompt_tokens"] += u.prompt_tokens
+            _usage["completion_tokens"] += u.completion_tokens
     except Exception as e:
         parsed = {f: None for f in FIELDS}
         parsed["Notes"] = None
@@ -312,8 +382,9 @@ def annotate_group(system_prompt: str, user_prompt: str, model: str) -> dict:
         if not isinstance(parsed, dict):
             raise ValueError(f"expected a JSON object keyed by turn, got {type(parsed)}")
         u = resp.usage
-        _usage["prompt_tokens"] += u.prompt_tokens
-        _usage["completion_tokens"] += u.completion_tokens
+        with _usage_lock:
+            _usage["prompt_tokens"] += u.prompt_tokens
+            _usage["completion_tokens"] += u.completion_tokens
     except Exception as e:
         parsed = {"_error": str(e)}
     return parsed
@@ -325,14 +396,18 @@ def annotate_group(system_prompt: str, user_prompt: str, model: str) -> dict:
 
 def run_condition(condition: dict, codebook: dict, eval_source_df: pd.DataFrame,
                    pool_df: pd.DataFrame, eval_df: pd.DataFrame, model: str,
-                   shot_discussion_ids: list[str]) -> pd.DataFrame:
+                   shot_discussion_ids: list[str], shot_rows: list[tuple] | None = None,
+                   concurrency: int = 1, checkpoint_path: str | None = None,
+                   checkpoint_every: int = 50) -> pd.DataFrame:
     system_prompt = build_codebook_prompt(codebook)
-    shots = build_shots_block(condition, codebook, pool_df, shot_discussion_ids)
+    shots = build_shots_block(condition, codebook, pool_df, shot_discussion_ids, shot_rows)
     if shots:
         system_prompt += "\n\n" + shots
 
-    records = []
-    for _, row in tqdm(list(eval_df.iterrows()), desc=condition["name"]):
+    rows = list(eval_df.iterrows())
+
+    def process_one(idx_row) -> dict:
+        _, row = idx_row
         user_prompt = build_user_prompt(eval_source_df, row)
         pred = annotate(system_prompt, user_prompt, model)
         rec = row.to_dict()
@@ -341,27 +416,62 @@ def run_condition(condition: dict, codebook: dict, eval_source_df: pd.DataFrame,
         rec["LLM_Notes"] = pred.get("Notes")
         if "_error" in pred:
             rec["LLM_error"] = pred["_error"]
-        records.append(rec)
+        return rec
+
+    records = []
+
+    def maybe_checkpoint(n_done: int):
+        if checkpoint_path and n_done % checkpoint_every == 0:
+            pd.DataFrame(records).to_csv(checkpoint_path, index=False)
+
+    if concurrency <= 1:
+        for i, idx_row in enumerate(tqdm(rows, desc=condition["name"]), start=1):
+            records.append(process_one(idx_row))
+            maybe_checkpoint(i)
+    else:
+        with ThreadPoolExecutor(max_workers=concurrency) as ex:
+            futures = {ex.submit(process_one, idx_row): idx_row for idx_row in rows}
+            for i, fut in enumerate(tqdm(as_completed(futures), total=len(futures),
+                                         desc=condition["name"]), start=1):
+                records.append(fut.result())
+                maybe_checkpoint(i)
+
+    if checkpoint_path:
+        pd.DataFrame(records).to_csv(checkpoint_path, index=False)
     return pd.DataFrame(records)
 
 
 def run_group_condition(condition: dict, codebook: dict, eval_source_df: pd.DataFrame,
                          pool_df: pd.DataFrame, model: str,
-                         shot_discussion_ids: list[str]) -> pd.DataFrame:
+                         shot_discussion_ids: list[str], shot_rows: list[tuple] | None = None,
+                         concurrency: int = 1, checkpoint_path: str | None = None,
+                         checkpoint_every: int = 50) -> pd.DataFrame:
     """One API call per discussion (group-round), labeling every turn in it at
-    once, instead of one call per utterance."""
+    once, instead of one call per utterance.
+
+    concurrency > 1 fires calls from a thread pool (independent per-discussion
+    calls, no shared state besides the _usage counter, which is lock-protected).
+    checkpoint_path, if given, is overwritten with results-so-far every
+    checkpoint_every discussions (plus once at the end) -- for a long run,
+    losing an in-progress crash to a lost connection shouldn't mean redoing
+    everything already paid for.
+    """
     system_prompt = build_codebook_prompt(codebook, per_group=True)
-    shots = build_shots_block(condition, codebook, pool_df, shot_discussion_ids)
+    shots = build_shots_block(condition, codebook, pool_df, shot_discussion_ids, shot_rows)
     if shots:
         system_prompt += "\n\n" + shots
 
-    records = []
-    discussion_ids = eval_source_df.discussion_id.unique()
-    for did in tqdm(list(discussion_ids), desc=condition["name"]):
-        d = discussion_transcript(eval_source_df, did)
+    discussion_ids = list(eval_source_df.discussion_id.unique())
+    # Pre-split into per-discussion frames once, up front, so worker threads
+    # only do the (thread-safe) annotate_group() call, not shared-df filtering.
+    frames = {did: discussion_transcript(eval_source_df, did) for did in discussion_ids}
+
+    def process_one(did: str) -> list[dict]:
+        d = frames[did]
         user_prompt = build_group_user_prompt(d)
         pred_by_turn = annotate_group(system_prompt, user_prompt, model)
         error = pred_by_turn.get("_error")
+        rows = []
         for _, row in d.iterrows():
             pred = pred_by_turn.get(str(int(row["turn"])), {}) if not error else {}
             rec = row.to_dict()
@@ -370,8 +480,46 @@ def run_group_condition(condition: dict, codebook: dict, eval_source_df: pd.Data
             rec["LLM_Notes"] = pred.get("Notes")
             if error:
                 rec["LLM_error"] = error
-            records.append(rec)
+            rows.append(rec)
+        return rows
+
+    records = []
+
+    def maybe_checkpoint(n_done: int):
+        if checkpoint_path and n_done % checkpoint_every == 0:
+            pd.DataFrame(records).to_csv(checkpoint_path, index=False)
+
+    if concurrency <= 1:
+        for i, did in enumerate(tqdm(discussion_ids, desc=condition["name"]), start=1):
+            records.extend(process_one(did))
+            maybe_checkpoint(i)
+    else:
+        with ThreadPoolExecutor(max_workers=concurrency) as ex:
+            futures = {ex.submit(process_one, did): did for did in discussion_ids}
+            for i, fut in enumerate(tqdm(as_completed(futures), total=len(futures),
+                                         desc=condition["name"]), start=1):
+                records.extend(fut.result())
+                maybe_checkpoint(i)
+
+    if checkpoint_path:
+        pd.DataFrame(records).to_csv(checkpoint_path, index=False)
     return pd.DataFrame(records)
+
+
+def krippendorff_alpha_2rater(y_true: list[str], y_pred: list[str]) -> float:
+    """
+    Krippendorff's alpha (nominal) for two raters over the same n units.
+    "Unmarked"/None is treated as its own category, matching cohen_kappa_score's
+    treatment above (both raters agreeing a field doesn't apply is a real
+    agreement, not missing data) -- so results are directly comparable to kappa.
+    """
+    categories = sorted(set(y_true) | set(y_pred))
+    code = {c: i for i, c in enumerate(categories)}
+    reliability_data = np.array([[code[v] for v in y_true], [code[v] for v in y_pred]], dtype=float)
+    try:
+        return krippendorff.alpha(reliability_data=reliability_data, level_of_measurement="nominal")
+    except (ValueError, ZeroDivisionError):
+        return float("nan")
 
 
 def score(results_df: pd.DataFrame) -> tuple[pd.DataFrame, float]:
@@ -381,7 +529,7 @@ def score(results_df: pd.DataFrame) -> tuple[pd.DataFrame, float]:
         for _, r in results_df.iterrows():
             gt = r[f"Human_{f}"]
             if pd.isna(gt) or gt == "":
-                gt = "No" if f in BLANK_MEANS_NO else None
+                gt = BLANK_FALLBACK.get(f)
             pred = r[f"LLM_{f}"]
             if pred in ("", "null", "None"):
                 pred = None
@@ -392,13 +540,15 @@ def score(results_df: pd.DataFrame) -> tuple[pd.DataFrame, float]:
             kappa = cohen_kappa_score(y_true, y_pred)
         except ValueError:
             kappa = float("nan")
-        field_rows.append({"field": f, "n": len(y_true), "accuracy": acc, "cohen_kappa": kappa})
+        alpha = krippendorff_alpha_2rater(y_true, y_pred)
+        field_rows.append({"field": f, "n": len(y_true), "accuracy": acc,
+                           "cohen_kappa": kappa, "krippendorff_alpha": alpha})
 
     def row_match(r):
         for f in FIELDS:
             gt = r[f"Human_{f}"]
             if pd.isna(gt) or gt == "":
-                gt = "No" if f in BLANK_MEANS_NO else None
+                gt = BLANK_FALLBACK.get(f)
             pred = r[f"LLM_{f}"]
             if pred in ("", "null", "None"):
                 pred = None
@@ -451,9 +601,36 @@ def main():
              "for whichever file --shot-data/DATA_PATH points at).",
     )
     parser.add_argument(
+        "--shot-rows", type=str, default=None,
+        help="Comma-separated discussion_id:turn pairs to use as row-level shot examples "
+             "for the '8_example_rows' condition (e.g. 'GPT_s47_FULL_R05_G1:0,...'). "
+             "Defaults to SHOT_POOL_ROWS_HAEWOON. Source file defaults to "
+             "ROW_SHOT_SOURCE_PATH (stratified_sample_hand_coded_haewoon_blind_recode.csv) "
+             "unless --shot-data is also given.",
+    )
+    parser.add_argument(
         "--per-group", action="store_true",
         help="Annotate one whole discussion (group-round) per API call, asking for labels on "
              "every turn at once, instead of one call per utterance.",
+    )
+    parser.add_argument(
+        "--no-exclude-shots", action="store_true",
+        help="Score shot discussions too, instead of the default held-out-eval behavior of "
+             "dropping any discussion_id used as a shot from the eval set. Use for a quick "
+             "sanity-check pass over a small hand-coded set where you want every row scored "
+             "regardless of few-shot overlap -- not a rigorous held-out benchmark.",
+    )
+    parser.add_argument(
+        "--concurrency", type=int, default=1,
+        help="Number of concurrent API calls (thread pool). Only affects --per-group mode. "
+             "Independent per-discussion calls, so this is safe to raise for a large corpus "
+             "run -- watch your account's rate limits.",
+    )
+    parser.add_argument(
+        "--checkpoint-every", type=int, default=50,
+        help="Overwrite <out-dir>/<condition>_checkpoint.csv with results-so-far every N "
+             "completed discussions (--per-group mode only), so a crash mid-run doesn't lose "
+             "everything already paid for. 0 disables checkpointing.",
     )
     args = parser.parse_args()
 
@@ -466,7 +643,7 @@ def main():
     codebook = json.load(open(CODEBOOK_PATH))
 
     shot_path = args.shot_data or DATA_PATH
-    shot_source_df = pd.read_csv(shot_path)
+    shot_source_df = pd.read_csv(shot_path, keep_default_na=False)
     if args.shot_discussion_ids:
         shot_discussion_ids = args.shot_discussion_ids.split(",")
     elif shot_path == DATA_PATH:
@@ -480,17 +657,49 @@ def main():
     if missing:
         raise SystemExit(f"shot_discussion_ids not found in --shot-data: {missing}")
 
-    if args.eval_data:
-        eval_source_df = pd.read_csv(args.eval_data)
-    else:
-        eval_source_df = pd.read_csv(DATA_PATH)
+    # Row-level shot pool ("8_example_rows" condition) is independent of the
+    # discussion-level pool above -- built only if a rows-kind condition was requested.
+    shot_rows = None
+    row_pool_df = None
+    if any(c["kind"] == "rows" for c in conditions):
+        if args.shot_rows:
+            shot_rows = [(did, int(t)) for did, t in
+                        (pair.rsplit(":", 1) for pair in args.shot_rows.split(","))]
+        else:
+            shot_rows = SHOT_POOL_ROWS_HAEWOON
+        row_shot_path = args.shot_data or ROW_SHOT_SOURCE_PATH
+        row_shot_source_df = (shot_source_df if row_shot_path == shot_path
+                              else pd.read_csv(row_shot_path, keep_default_na=False))
+        row_shot_discussion_ids = sorted(set(did for did, _ in shot_rows))
+        row_pool_df = row_shot_source_df[row_shot_source_df.discussion_id.isin(row_shot_discussion_ids)]
+        missing_rows = set(row_shot_discussion_ids) - set(row_pool_df.discussion_id)
+        if missing_rows:
+            raise SystemExit(f"shot_rows discussion_ids not found in {row_shot_path!r}: {missing_rows}")
 
-    # Shots are only excluded from eval when both come from the same underlying
-    # file (by path); an eval file distinct from the shot file needs no overlap
-    # check since group-round discussion_ids are unique per source run anyway,
-    # but we guard explicitly in case the same discussion_id shows up in both.
-    overlap = set(shot_discussion_ids) & set(eval_source_df.discussion_id)
-    eval_df = eval_source_df[~eval_source_df.discussion_id.isin(overlap)]
+    if args.eval_data:
+        eval_source_df = pd.read_csv(args.eval_data, keep_default_na=False)
+    else:
+        eval_source_df = pd.read_csv(DATA_PATH, keep_default_na=False)
+
+    # Shots are excluded from eval by default (held-out benchmark) regardless of
+    # whether shot/eval come from the same file path, since discussion_ids are
+    # unique per source run anyway. --no-exclude-shots skips this for a quick
+    # sanity-check pass where every row should be scored.
+    # Pool-kind (discussion-level) shots exclude the whole discussion; rows-kind
+    # (single-turn) shots exclude only the exact (discussion_id, turn) pair used,
+    # not its sibling turns -- excluding the whole discussion would over-drop rows
+    # that were never actually shown to the model.
+    if args.no_exclude_shots:
+        eval_df = eval_source_df
+    else:
+        eval_df = eval_source_df
+        if any(c["kind"] == "pool" for c in conditions):
+            overlap = set(shot_discussion_ids) & set(eval_df.discussion_id)
+            eval_df = eval_df[~eval_df.discussion_id.isin(overlap)]
+        if shot_rows is not None:
+            shot_row_keys = set(shot_rows)
+            eval_df = eval_df[~eval_df.apply(
+                lambda r: (r["discussion_id"], int(r["turn"])) in shot_row_keys, axis=1)]
     if not args.eval_data and not args.shot_data:
         eval_df = eval_df.head(args.limit or 32)
     elif args.limit:
@@ -500,12 +709,24 @@ def main():
 
     summaries = []
     for condition in conditions:
+        cond_pool_df = row_pool_df if condition["kind"] == "rows" else pool_df
+        cond_shot_rows = shot_rows if condition["kind"] == "rows" else None
         if args.per_group:
-            results_df = run_group_condition(condition, codebook, eval_df, pool_df, args.model,
-                                               shot_discussion_ids)
+            checkpoint_path = (os.path.join(args.out_dir, f"{condition['name']}_checkpoint.csv")
+                               if args.checkpoint_every > 0 else None)
+            results_df = run_group_condition(condition, codebook, eval_df, cond_pool_df, args.model,
+                                               shot_discussion_ids, cond_shot_rows,
+                                               concurrency=args.concurrency,
+                                               checkpoint_path=checkpoint_path,
+                                               checkpoint_every=args.checkpoint_every)
         else:
-            results_df = run_condition(condition, codebook, eval_source_df, pool_df, eval_df,
-                                        args.model, shot_discussion_ids)
+            checkpoint_path = (os.path.join(args.out_dir, f"{condition['name']}_checkpoint.csv")
+                               if args.checkpoint_every > 0 else None)
+            results_df = run_condition(condition, codebook, eval_source_df, cond_pool_df, eval_df,
+                                        args.model, shot_discussion_ids, cond_shot_rows,
+                                        concurrency=args.concurrency,
+                                        checkpoint_path=checkpoint_path,
+                                        checkpoint_every=args.checkpoint_every)
         results_df.to_csv(os.path.join(args.out_dir, f"{condition['name']}_annotated.csv"), index=False)
 
         field_summary, exact_match_rate = score(results_df)

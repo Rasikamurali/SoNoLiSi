@@ -19,6 +19,7 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+from scipy import stats as _stats
 
 warnings.filterwarnings("ignore")
 
@@ -37,9 +38,9 @@ CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 # perception_quantified.py) now lives, for the os.path.join(CODE_DIR, script)
 # calls below that used to assume everything was co-located.
 ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
-while not os.path.exists(os.path.join(ANALYSIS_DIR, "sobel_mediation.py")):
+while not os.path.exists(os.path.join(ANALYSIS_DIR, "model_specs.py")):
     ANALYSIS_DIR = os.path.dirname(ANALYSIS_DIR)
-SCRIPT_SUBFOLDER = {"behavior_quantified.py": "behavioral", "perception_quantified.py": "perception"}
+SCRIPT_SUBFOLDER = {"behavior_quantified.py": "behavioral"}
 
 MODELS   = ["llama_13b", "mistral_13b", "qwen_14b"]
 
@@ -160,25 +161,22 @@ def check_completeness():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_stability():
+    """Superseded 2026-08-24 by perception_consensus.py --tier 13b (item a of
+    the perception/alignment consolidation)."""
     print("=" * 60)
-    print("STABILITY ANALYSIS — 13B models")
+    print("PERCEPTUAL CONSENSUS (perception_consensus.py) — 13b tier")
     print("=" * 60)
 
-    import stability_analysis as sa
-    sa.VARIANT     = VARIANT
-    sa.SEEDS       = SEEDS
-    sa.FIG_ROOT    = FIG_ROOT
-    sa.MODELS      = MODELS
-    sa.MODEL_LABELS = MODEL_LABELS
-
-    store = sa.build_store()
-    for model in MODELS:
-        for cond in ["FULL", "BASELINE"]:
-            n = len(store[model].get(cond, {}))
-            print(f"  {MODEL_LABELS[model]} / {cond}: {n} seeds")
-
-    sa.plot_stability(store)
-    print(f"  Saved: stability_analysis.png/.pdf")
+    script_path = os.path.join(ANALYSIS_DIR, "perception", "perception_consensus.py")
+    result = subprocess.run([sys.executable, script_path, "--tier", "13b"],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"  [WARN] perception_consensus.py exited with code {result.returncode}")
+        if result.stderr:
+            print(result.stderr[-1000:])
+    else:
+        for l in [l for l in result.stdout.splitlines() if l.strip()][-10:]:
+            print(f"    {l}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -200,6 +198,18 @@ def build_contribution_store():
     return store
 
 
+def mean_ci95(arr):
+    """
+    arr: one row per seed/run (run-clustered). Returns (mean, half-width) for a
+    t-based 95% CI, df = n_seeds - 1 per round.
+    """
+    n = np.sum(~np.isnan(arr), axis=0)
+    mean = np.nanmean(arr, axis=0)
+    se = np.nanstd(arr, axis=0, ddof=1) / np.sqrt(np.where(n > 1, n, np.nan))
+    tcrit = _stats.t.ppf(0.975, np.maximum(n - 1, 1))
+    return mean, tcrit * se
+
+
 def plot_contribution_trajectories(store):
     rounds = np.array(ROUNDS)
     fig, axes = plt.subplots(
@@ -212,11 +222,10 @@ def plot_contribution_trajectories(store):
             ax = axes[row, col]
             seed_data = store[model][cond]
             if seed_data:
-                arr  = np.array(list(seed_data.values()), dtype=float)
-                mean = np.nanmean(arr, axis=0)
-                se   = np.nanstd(arr, axis=0) / np.sqrt(np.sum(~np.isnan(arr), axis=0))
+                arr = np.array(list(seed_data.values()), dtype=float)
+                mean, ci = mean_ci95(arr)
                 ax.plot(rounds, mean, color=COND_COLORS[cond], linewidth=2)
-                ax.fill_between(rounds, mean - se, mean + se,
+                ax.fill_between(rounds, mean - ci, mean + ci,
                                 color=COND_COLORS[cond], alpha=0.2)
                 ax.text(0.97, 0.07, f"n={len(seed_data)}",
                         transform=ax.transAxes, ha="right", fontsize=9, color="gray")
@@ -272,11 +281,10 @@ def plot_all_models_by_metric(store):
                     continue
                 arr    = np.array(series_list, dtype=float)
                 rounds = np.arange(1, arr.shape[1] + 1)
-                mean   = np.nanmean(arr, axis=0)
-                se     = np.nanstd(arr, axis=0) / np.sqrt(arr.shape[0])
+                mean, ci = mean_ci95(arr)
                 ax.plot(rounds, mean, color=COND_COLORS[cond], linewidth=2,
                         marker="o", markersize=3, label=COND_LABELS[cond])
-                ax.fill_between(rounds, mean - se, mean + se,
+                ax.fill_between(rounds, mean - ci, mean + ci,
                                 color=COND_COLORS[cond], alpha=0.15)
             if ylim[0] is not None:
                 ax.set_ylim(*ylim)
@@ -299,6 +307,29 @@ def plot_all_models_by_metric(store):
         print(f"  Saved: {fname}")
 
 
+def run_contribution_all_conditions_plot():
+    print("=" * 60)
+    print("CONTRIBUTION TRAJECTORIES (all conditions overlaid) — 13B models")
+    print("=" * 60)
+    out_dir = "/data3/rasimura/social-norm-evo/figures/SUPPLEMENTARY_RESULTS/3_13b_tier/1_contribution_trajectories"
+    script_path = os.path.join(ANALYSIS_DIR, "behavioral", "contribution_all_conditions_plot.py")
+    cmd = ([sys.executable, script_path,
+            "--variant", VARIANT, "--models"] + MODELS
+           + ["--seeds"] + [str(s) for s in SEEDS]
+           + ["--results-dir", RESULTS,
+              "--out-dir", out_dir,
+              "--out-name", "all_conditions_13b",
+              "--model-labels"] + [f"{k}={v}" for k, v in DISPLAY_LABELS.items()])
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"  [WARN] contribution_all_conditions_plot.py exited with code {result.returncode}")
+        if result.stderr:
+            print(result.stderr[-1500:])
+    else:
+        for line in [l for l in result.stdout.splitlines() if l.strip()]:
+            print(f"    {line}")
+
+
 def run_contribution_plots():
     print("=" * 60)
     print("CONTRIBUTION TRAJECTORIES — 13B models")
@@ -310,6 +341,7 @@ def run_contribution_plots():
     print()
     plot_contribution_trajectories(store)
     plot_all_models_by_metric(store)
+    run_contribution_all_conditions_plot()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -322,11 +354,9 @@ def run_per_seed_plots():
     print("=" * 60)
 
     import temp_evals_behavior as teb
-    teb.VARIANTS     = [VARIANT]
     teb.FIG_ROOT     = FIG_ROOT
     teb.SEEDS        = SEEDS
     teb.MODELS       = MODELS
-    teb.MODEL_LABELS = MODEL_LABELS
 
     for model in MODELS:
         print(f"  {DISPLAY_LABELS[model]}")
@@ -367,26 +397,22 @@ def run_network_plots():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_alignment_plots():
+    """Superseded 2026-08-24 by perception_action_gap_plot.py --tier 13b
+    (item b of the perception/alignment consolidation)."""
     print("=" * 60)
-    print("PERCEPTION-ACTION GAP — 13B models")
+    print("PERCEPTION-ACTION GAP (perception_action_gap_plot.py) — 13b tier")
     print("=" * 60)
 
-    import temp_eval_alignment2 as tea
-    tea.VARIANT       = VARIANT
-    tea.FIG_ROOT      = FIG_ROOT
-    tea.SEEDS         = SEEDS
-    tea.MODELS        = MODELS
-    tea.MODEL_LABELS  = MODEL_LABELS
-    tea.MODEL_COLORS  = MODEL_COLORS_13B
-
-    store = tea.build_store()
-    for model in MODELS:
-        n = len(store[model].get("FULL", {}))
-        print(f"  {MODEL_LABELS[model]} / FULL: {n} seeds")
-
-    tea.plot_per_model(store)
-    tea.plot_across_models(store)
-    print(f"  Saved to {FIG_ROOT}/cross_model/ and per-model alignment_analysis/")
+    script_path = os.path.join(ANALYSIS_DIR, "alignment", "perception_action_gap_plot.py")
+    result = subprocess.run([sys.executable, script_path, "--tier", "13b"],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"  [WARN] perception_action_gap_plot.py exited with code {result.returncode}")
+        if result.stderr:
+            print(result.stderr[-1000:])
+    else:
+        for l in [l for l in result.stdout.splitlines() if l.strip()][-10:]:
+            print(f"    {l}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -401,13 +427,16 @@ def run_stats():
     stats_out = os.path.join(FIG_ROOT, "paper_stats")
     os.makedirs(stats_out, exist_ok=True)
 
+    # behavior_quantified.py's Q1/Q2 tables are this tier's canonical
+    # pairwise-OLS+Wald result -- write directly to SUPPLEMENTARY_RESULTS.
+    pairwise_out = "/data3/rasimura/social-norm-evo/figures/SUPPLEMENTARY_RESULTS/3_13b_tier/2_pairwise_ols_wald"
+    os.makedirs(pairwise_out, exist_ok=True)
+
     seeds_str = [str(s) for s in SEEDS]
 
     for script, extra in [
         ("behavior_quantified.py",
-         ["--variant", VARIANT, "--models"] + MODELS + ["--seeds"] + seeds_str + ["--out-dir", stats_out]),
-        ("perception_quantified.py",
-         ["--variant", VARIANT, "--models"] + MODELS + ["--seeds"] + seeds_str + ["--fig-root", FIG_ROOT]),
+         ["--variant", VARIANT, "--models"] + MODELS + ["--seeds"] + seeds_str + ["--out-dir", pairwise_out]),
     ]:
         script_path = os.path.join(ANALYSIS_DIR, SCRIPT_SUBFOLDER.get(script, ""), script)
         cmd = [sys.executable, script_path] + extra
@@ -422,6 +451,25 @@ def run_stats():
                 print(f"    {line}")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. SUPPORTING RESULTS — mixed-effects level/slope tests (behavioral_statistical.py)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def run_behavioral_statistical():
+    print("=" * 60)
+    print("BEHAVIORAL STATISTICAL TESTS (mixed effects, level/slope) — 13B/14B")
+    print("=" * 60)
+    import behavioral_statistical as bs
+    bs.MODELS   = ["llama_13b", "mistral_13b", "qwen_14b"]
+    bs.LABELS   = {"llama_13b": "Llama-13B", "mistral_13b": "Mistral-13B", "qwen_14b": "Qwen-14B"}
+    bs.FAMILIES = ["Llama-13B", "Mistral-13B", "Qwen-14B"]
+    bs.REF_FAM  = "Mistral-13B"
+    bs.RESULTS  = "/data3/rasimura/social-norm-evo/results"
+    bs.VARIANT  = "local"
+    bs.FIG_ROOT = "/data3/rasimura/social-norm-evo/figures/SUPPLEMENTARY_RESULTS/3_13b_tier/behavioral_mixed_effects"
+    bs.main()
+
+
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -432,4 +480,5 @@ if __name__ == "__main__":
     run_network_plots()
     run_alignment_plots()
     run_stats()
+    run_behavioral_statistical()
     print(f"\nAll outputs → {FIG_ROOT}")

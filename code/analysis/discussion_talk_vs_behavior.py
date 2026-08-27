@@ -45,7 +45,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sobel_mediation import MODEL_SPECS
+from model_specs import MODEL_SPECS
 
 warnings.filterwarnings("ignore")
 

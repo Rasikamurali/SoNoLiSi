@@ -1,9 +1,14 @@
 """
 behavioral_statistical.py
 --------------------------
-Formal statistical tests for contribution (behavioral) outcomes.
-Main experiment: N=12 agents, group size G=4, MCPR=0.4.
-Models: GPT-4o, Llama-3.1-8B, Mistral-7B, Qwen2.5-7B.
+Formal statistical tests for contribution (behavioral) outcomes -- the
+paper's "supporting results" (mixed effects, level/slope). Single reusable
+file for any model set: 7B/8B (default), 13B/14B tier, 70B/72B tier, or any
+other subset, selected via --models on the CLI. Was three separate files
+(behavioral_statistical.py + _13b.py + _70b.py monkey-patching this one's
+globals) with the actual data-loading logic duplicated verbatim across all
+three; consolidated since --models/--variant/--results-dir/--out-dir already
+cover what those two variant files did.
 
 Tests
 -----
@@ -13,9 +18,10 @@ Tests
 4. Initial-cooperation  — round*condition*initial_level moderation per family
 5. Dispersion           — SD across agents, final 5 rounds, per family×condition
 
-Outputs  →  figures/statistical_tests/behavioral/
+Outputs  →  --out-dir (default: figures/statistical_tests/behavioral/)
 """
 
+import argparse
 import json
 import glob
 import os
@@ -36,8 +42,15 @@ warnings.filterwarnings("ignore")
 # CONFIG
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Defaults are the 7B/8B family; --models/--model-labels/--ref-family/
+# --variant/--results-dir on the CLI (see __main__ below) repoint all of
+# this to any other model set -- e.g. the 13B/14B tier, the 70B/72B tier,
+# or the S2 replication set. Every test_*/write_*_tex function below reads
+# FAMILIES/REF_FAM/CONDITIONS as module globals, so nothing past this
+# config block needs to change per model set.
 RESULTS    = "/data3/rasimura/social-norm-evo/results"
 FIG_ROOT   = "/data3/rasimura/social-norm-evo/figures/statistical_tests/behavioral"
+VARIANT    = "local"
 
 MODELS     = ["gpt", "llama", "mistral", "qwen"]
 LABELS     = {"gpt": "GPT", "llama": "Llama", "mistral": "Mistral", "qwen": "Qwen"}
@@ -46,6 +59,20 @@ CONDITIONS = ["PURE_BASELINE", "BASELINE", "NO_SELECTION", "NO_DISCUSSION", "FUL
 ROUND_MEAN = 10.5
 REF_COND   = "PURE_BASELINE"
 REF_FAM    = "Mistral"
+
+# Fallback display names for known model keys -- --model-labels overrides these.
+DEFAULT_LABELS = {
+    "gpt":         "GPT",
+    "llama":       "Llama",
+    "mistral":     "Mistral",
+    "qwen":        "Qwen",
+    "llama_13b":   "Llama-13B",
+    "mistral_13b": "Mistral-13B",
+    "qwen_14b":    "Qwen-14B",
+    "llama_70b":   "Llama-70B",
+    "qwen_72b":    "Qwen-72B",
+    "gpt-5-mini":  "GPT-5-mini",
+}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATA LOADING
@@ -56,7 +83,7 @@ def _load_best_logs():
     best = {}
     for model in MODELS:
         for path in sorted(glob.glob(
-                os.path.join(RESULTS, model, "local", "seed*", "log_*.json"))):
+                os.path.join(RESULTS, model, VARIANT, "seed*", "log_*.json"))):
             try:
                 d    = json.load(open(path))
                 seed = int(path.split("seed")[1].split("/")[0])
@@ -818,4 +845,40 @@ def main():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Behavioral mixed-effects statistical tests.")
+    parser.add_argument("--models", "-m", nargs="+", default=["gpt", "llama", "mistral", "qwen"],
+                        help="Model keys to include (default: the 7B/8B set).")
+    parser.add_argument("--model-labels", nargs="+", default=[],
+                        metavar="KEY=FAMILY",
+                        help="Override family labels, e.g. --model-labels gpt=GPT. "
+                             "Unlisted known keys fall back to a built-in default; "
+                             "unknown keys fall back to the raw key.")
+    parser.add_argument("--ref-family", default=None,
+                        help="Reference family for contrasts (default: the first model's family).")
+    parser.add_argument("--variant", "-v", default="local", help="Data variant (default: local).")
+    parser.add_argument("--results-dir", default=RESULTS,
+                        help="Results root (default: the main results/ dir).")
+    parser.add_argument("--out-dir", "-o", default=FIG_ROOT, help="Output directory.")
+    args = parser.parse_args()
+
+    labels = dict(DEFAULT_LABELS)
+    for pair in args.model_labels:
+        key, _, label = pair.partition("=")
+        labels[key] = label
+
+    MODELS   = args.models
+    LABELS   = {k: labels.get(k, k) for k in MODELS}
+    FAMILIES = [LABELS[k] for k in MODELS]
+    REF_FAM  = args.ref_family if args.ref_family else FAMILIES[0]
+    RESULTS  = args.results_dir
+    VARIANT  = args.variant
+    FIG_ROOT = args.out_dir
+
+    print(f"Models      : {MODELS}")
+    print(f"Families    : {FAMILIES}")
+    print(f"Ref family  : {REF_FAM}")
+    print(f"Variant     : {VARIANT}")
+    print(f"Results dir : {RESULTS}")
+    print(f"Out dir     : {FIG_ROOT}")
+
     main()

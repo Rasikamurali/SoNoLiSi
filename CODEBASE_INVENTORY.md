@@ -6,20 +6,42 @@ Catalog of every `.py` file in this repo — what it does, what it reads, what i
 
 ## 0. Reorg status: DONE (2026-08-11)
 
-`code/analysis/`'s 58 flat files were split into 9 theme subfolders, git-tracked via `git mv` (history preserved). Two files stayed at the top level of `code/analysis/` because they're imported across many themes: **`sobel_mediation.py`** and **`discussion_talk_vs_behavior.py`**.
+`code/analysis/`'s 58 flat files were split into 9 theme subfolders, git-tracked via `git mv` (history preserved). Two files stayed at the top level of `code/analysis/` because they're imported across many themes: ~~**`sobel_mediation.py`**~~ and **`discussion_talk_vs_behavior.py`**.
+
+**Update (2026-08-24):** `perception/` and `alignment/` were consolidated from
+~15 overlapping scripts down to 4 canonical, tier-parametrized files (see
+`MAIN_PAPER_RESULTS.md`'s "Perception/alignment consolidation" section for
+the full mapping and rationale):
+`perception/perception_consensus.py`, `alignment/perception_action_gap_plot.py`,
+`alignment/gap_based_alignment.py`, `alignment/lagged_alignment_check.py`.
+The superseded originals (`temp_eval_perception.py`, `perception_consensus_avg7b.py`,
+`perception_consensus_combined_small_with_avg.py`, `perception_consensus_combined_s2.py`,
+`perception_quantified.py`, `perception_dn_in.py`, `in_dn_predictive.py`,
+`timestep_did.py`, `expectation_gap_evolution_plots.py`,
+`mediation_llama_mistral_qwen.py`, `alignment_quantified.py`,
+`gap_based_alignment_test.py`, `lagged_ar_regression.py`, `temp_eval_alignment.py`,
+`temp_eval_alignment2.py`, `cross-model/stability_analysis.py`) were archived
+to `archive/{perception,alignment,cross-model}/`. `gap_convergence_did.py` and
+`mechanism_interaction.py` were untouched (different questions, not part of
+this consolidation). The `perception/` and `alignment/` rows in the table
+below, and the 13-line per-file catalog in Sections 1-8, now describe the
+pre-2026-08-24 state for the archived files — read `MAIN_PAPER_RESULTS.md`
+for the current canonical files.
+
+**Update (2026-08-17):** `sobel_mediation.py` was archived to `archive/sobel_mediation.py` — its own Sobel-mediation-test analysis had been superseded by `perception/mediation_llama_mistral_qwen.py`'s direct lagged-gap regression, but the file had accumulated unrelated shared infra (`MODEL_SPECS`/`CONDITIONS`/`BASE` registry, plus the `load_all`/`add_lags`/`zscale`/`stars` panel-loading helpers) that 7 other scripts depended on, and its presence at `code/analysis/` was also used as a directory anchor by ~19 scripts. That shared infra was extracted into a new **`model_specs.py`**, which now plays both roles (shared config/utilities + anchor file) that `sobel_mediation.py` used to play. All import statements and anchor-walk loops below were updated accordingly; references to `sobel_mediation.py` in the rest of this section describe the pre-2026-08-17 state and are kept for history — read `model_specs.py` wherever the anchor/shared-infra role is meant.
 
 ### New layout
 
 | Folder | Files |
 |---|---|
 | `behavioral/` | `behavioral_statistical.py`, `behavioral_statistical_13b.py`, `behavioral_statistical_70b.py`, `behavior_quantified.py`, `paper_tables_behavioral.py`, `temp_evals_behavior.py` |
-| `perception/` | `perception_quantified.py`, `perception_dn_in.py`, `perception_consensus_avg7b.py`, `perception_consensus_combined_small_with_avg.py`, `in_dn_predictive.py`, `timestep_did.py`, `temp_eval_perception.py` |
-| `alignment/` | `alignment_quantified.py`, `gap_based_alignment_test.py`, `gap_convergence_did.py`, `lagged_ar_regression.py`, `mechanism_interaction.py`, `temp_eval_alignment.py`, `temp_eval_alignment2.py` |
+| `perception/` | `perception_consensus.py` (as of 2026-08-24; superseded files listed in the 2026-08-24 update note above, now in `archive/perception/`) |
+| `alignment/` | `gap_based_alignment.py`, `perception_action_gap_plot.py`, `lagged_alignment_check.py`, `gap_convergence_did.py`, `mechanism_interaction.py` (as of 2026-08-24; superseded files now in `archive/alignment/`) |
 | `selection/` | `eval_network_quantified.py`, `network_development_all_models.py`, `selection_precision.py`, `selection_precision_avg7b.py`, `lockin_check.py`, `social_selection_feedback_analysis.py`, `weight_update_check.py`, `exclusion_diagnostics.py`, `build_agent_round_panel.py`, `temp_eval_network.py`, `temp_evals_selection.py` — network-related files folded in here, no separate "network" folder was requested |
 | `discussion/` | `discussion_mechanism_analysis.py`, `discussion_phrase_context.py`, `repeated_phrases.py`, `sample_conversations_for_review.py`, `human_annotation_stratified_sample.py`, `gpt_5_annotation_sl.py`, `temp_evals_discussion.py`, and the whole `gpt5_annotation_pilot/` subfolder |
 | `shock/` | `shock_analysis.py`, `its_shock_round20.py`, `new_intro_analysis.py`, `new_intro_adversarial_plots.py`, `plot_dissociation_belief_vs_contribution.py` |
 | `mcpr/` | `mcpr_lmm_analysis.py`, `mcpr_lmm_alignment_network.py` |
-| `cross-model/` | `compare_7b_13b.py`, `compare_global_local.py`, `run_local_analysis.py`, `run_13b_analysis.py`, `run_70b_analysis.py`, `robustness_analysis.py`, `robustness_split.py`, `subsample_stability.py`, `stability_analysis.py`, `evaluation_multi.py` |
+| `cross-model/` | `compare_7b_13b.py`, `compare_global_local.py`, `run_local_analysis.py`, `run_13b_analysis.py`, `run_70b_analysis.py`, `robustness_analysis.py`, `robustness_split.py`, `subsample_stability.py`, `evaluation_multi.py` (`stability_analysis.py` archived 2026-08-24, superseded by `perception/perception_consensus.py`) |
 | `plotting/` | `plot_prompt_boxes.py` |
 | *(top level)* | `sobel_mediation.py`, `discussion_talk_vs_behavior.py` — shared infra, imported across most of the above |
 

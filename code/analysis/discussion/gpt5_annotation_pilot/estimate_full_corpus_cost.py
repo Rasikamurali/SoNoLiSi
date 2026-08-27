@@ -27,7 +27,7 @@ import tiktoken
 # discussion_talk_vs_behavior.py stays at code/analysis/ (shared across
 # themes) -- anchor to it and add every subfolder to sys.path.
 _ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
-while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
     _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
 for _p in [_ANALYSIS_DIR] + [
     os.path.join(_ANALYSIS_DIR, d) for d in os.listdir(_ANALYSIS_DIR)

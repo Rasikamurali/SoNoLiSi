@@ -20,7 +20,7 @@ import pandas as pd
 
 # Reorg (2026-08-11): see build_pattern_tables.py for why this anchor exists.
 _ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
-while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
     _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
 
 IN_PATH = os.path.join(

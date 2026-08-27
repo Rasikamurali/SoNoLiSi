@@ -20,7 +20,7 @@ import pandas as pd
 # being invoked from exactly this file's directory. Anchored to code/analysis/
 # via __file__ instead so it works regardless of invocation cwd or nesting depth.
 _ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
-while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
     _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
 
 DATA_PATH = os.path.join(_ANALYSIS_DIR, "exports", "human_annotation_stratified_sample",

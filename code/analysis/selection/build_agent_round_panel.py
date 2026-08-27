@@ -24,12 +24,12 @@ import numpy as np
 import pandas as pd
 
 # Reorg (2026-08-11): this file now lives in code/analysis/selection/, but
-# sobel_mediation.py stays at code/analysis/ (shared across many themes) --
+# model_specs.py stays at code/analysis/ (shared across many themes) --
 # walk up to find it and add every code/analysis/ subfolder to sys.path so
 # bare local imports keep working regardless of which theme folder a module
 # ended up in.
 _ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
-while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
     _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
 for _p in [_ANALYSIS_DIR] + [
     os.path.join(_ANALYSIS_DIR, d) for d in os.listdir(_ANALYSIS_DIR)
@@ -38,7 +38,7 @@ for _p in [_ANALYSIS_DIR] + [
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from sobel_mediation import MODEL_SPECS, CONDITIONS
+from model_specs import MODEL_SPECS, CONDITIONS
 
 PARTICIPATION_THRESHOLD = 0.3  # from SimConfig in SoNoLiSi_v5_os_local.py
 

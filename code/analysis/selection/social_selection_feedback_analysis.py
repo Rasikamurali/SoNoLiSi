@@ -19,7 +19,7 @@ own received evaluation scores or network weight in any prompt, and
 seed).
 
 Canonical scope: same as every other script in code/analysis/ - MODEL_SPECS
-from sobel_mediation.py (9 families, local variant, canonical seed lists),
+from model_specs.py (9 families, local variant, canonical seed lists),
 deduped to the last-timestamped log file per (model, seed, condition).
 
 Output directory: exports/social_selection_feedback/
@@ -42,7 +42,7 @@ import matplotlib.pyplot as plt
 
 # Reorg (2026-08-11): see selection/build_agent_round_panel.py for why this block exists.
 _ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
-while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
     _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
 for _p in [_ANALYSIS_DIR] + [
     os.path.join(_ANALYSIS_DIR, d) for d in os.listdir(_ANALYSIS_DIR)
@@ -51,7 +51,104 @@ for _p in [_ANALYSIS_DIR] + [
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from sobel_mediation import MODEL_SPECS
+from model_specs import MODEL_SPECS
+
+# 2026-08-24: tier registry for --tier (a: 7b main, b: s2 supplementary,
+# c: community/group/mcpr structural robustness).
+#
+# Deliberately NOT built from _ms.MODEL_SPECS: the selection_mechanism_*.py
+# wrapper scripts do `import model_specs as sm; sm.MODEL_SPECS = [...narrowed...]`
+# BEFORE importing this module (their own docstrings explain why -- that
+# mutation must land before this module's own `from model_specs import
+# MODEL_SPECS` below). Since sm/_ms are the same cached module object,
+# reading _ms.MODEL_SPECS here would silently pick up whatever narrowed
+# list a wrapper already installed instead of the full 10-family registry
+# -- exactly the KeyError this comment is warning future-you away from
+# reintroducing. This is a hardcoded, self-contained copy of
+# model_specs.py's canonical MODEL_SPECS content instead.
+BASE = "/data3/rasimura/social-norm-evo"
+_CANONICAL_SPECS = [
+    ("gpt",         "GPT",         f"{BASE}/results",      "local", list(range(43, 53))),
+    ("llama",       "Llama-7B",    f"{BASE}/results",      "local", list(range(43, 53))),
+    ("mistral",     "Mistral-7B",  f"{BASE}/results",      "local", list(range(43, 53))),
+    ("qwen",        "Qwen-7B",     f"{BASE}/results",      "local", list(range(43, 53))),
+    ("llama_13b",   "Llama-13B",   f"{BASE}/results",      "local", list(range(42, 52))),
+    ("mistral_13b", "Mistral-13B", f"{BASE}/results",      "local", list(range(42, 52))),
+    ("qwen_14b",    "Qwen-14B",    f"{BASE}/results",      "local", list(range(42, 52))),
+    ("llama_70b",   "Llama-70B",   f"{BASE}/code/results", "local", list(range(42, 52))),
+    ("qwen_72b",    "Qwen-72B",    f"{BASE}/code/results", "local", list(range(42, 52))),
+    ("gpt-5-mini",  "GPT-5-mini",  f"{BASE}/code/results", "local", list(range(42, 52))),
+]
+_SPEC_BY_KEY = {s[0]: s for s in _CANONICAL_SPECS}
+
+TIER_FAMILY_SPECS = {
+    "7b": [_SPEC_BY_KEY[k] for k in ("gpt", "llama", "mistral", "qwen")],
+    "s2": [_SPEC_BY_KEY[k] for k in ("gpt-5-mini", "llama_70b", "mistral_13b", "qwen_72b")],
+}
+TIER_REF_FAMILY = {"7b": "GPT", "s2": "GPT-5-mini"}
+TIER_PUBLISH_DIR = {
+    "7b": f"{BASE}/figures/MAIN_RESULTS/6_social_selection_per_link",
+    "s2": f"{BASE}/figures/SUPPLEMENTARY_RESULTS/2_bigger_models/6_social_selection_per_link",
+}
+
+# Community/group/mcpr structural sources -- same directory layout as
+# gap_based_alignment.py's COMMUNITY_SOURCES/GROUP_N12_SOURCES/GROUP_N16_SOURCES,
+# rebuilt here as MODEL_SPECS-shaped 5-tuples since build_core_datasets()
+# reads MODEL_SPECS directly (not the {model: {dir, seeds, family}} shape).
+_COMMUNITY_MODELS = ["llama", "mistral", "qwen", "llama_13b", "mistral_13b", "qwen_14b", "llama_70b", "qwen_72b"]
+_SEVENB_MODELS = ["llama", "mistral", "qwen"]
+
+
+def _spec(model_key, variant, seeds=range(42, 52), results_dir=None):
+    _, family, default_rdir, _v, _s = _SPEC_BY_KEY[model_key]
+    return (model_key, family, results_dir or f"{BASE}/code/results", variant, list(seeds))
+
+
+STRUCTURAL_TIER_SPECS = {
+    "community": {
+        "N12": {"specs": [_SPEC_BY_KEY[k] for k in _COMMUNITY_MODELS], "n_agents": 12, "group_size": 4},
+        "N16": {"specs": [_spec(k, "local/N16_G4") for k in _COMMUNITY_MODELS], "n_agents": 16, "group_size": 4},
+        "N20": {"specs": [_spec(k, "local/N20_G4") for k in _COMMUNITY_MODELS], "n_agents": 20, "group_size": 4},
+    },
+    "group": {
+        "N12_G3": {"specs": [_spec(k, "local_groupsizevary/N12_G3_MCPR0.4") for k in _SEVENB_MODELS],
+                  "n_agents": 12, "group_size": 3},
+        "N12_G4": {"specs": [_SPEC_BY_KEY[k] for k in _SEVENB_MODELS], "n_agents": 12, "group_size": 4},
+        "N12_G6": {"specs": [_spec(k, "local_groupsizevary/N12_G6_MCPR0.4") for k in _SEVENB_MODELS],
+                  "n_agents": 12, "group_size": 6},
+        "N16_G4": {"specs": [_spec(k, "local/N16_G4") for k in _SEVENB_MODELS], "n_agents": 16, "group_size": 4},
+        "N16_G8": {"specs": [_spec(k, "local_groupsizevary/N16_G8_MCPR0.4") for k in _SEVENB_MODELS],
+                  "n_agents": 16, "group_size": 8},
+    },
+    "mcpr": {
+        "MCPR0.4": {"specs": [_SPEC_BY_KEY[k] for k in _SEVENB_MODELS], "n_agents": 12, "group_size": 4},
+        "MCPR0.5": {"specs": [_spec(k, "local_groupsizevary/N12_G4_MCPR0.5") for k in _SEVENB_MODELS],
+                   "n_agents": 12, "group_size": 4},
+        "MCPR0.8": {"specs": [_spec(k, "local_groupsizevary/N12_G4_MCPR0.8") for k in _SEVENB_MODELS],
+                   "n_agents": 12, "group_size": 4},
+    },
+}
+STRUCTURAL_PUBLISH_ROOT = f"{BASE}/figures/SUPPLEMENTARY_RESULTS/5_community_group_mcpr"
+
+# 2026-08-18: canonical scope for this main table is the small/7B tier only
+# (gpt-4o-mini, Llama-7B, Mistral-7B, Qwen-7B), their original 10 seeds.
+# model_specs.py's MODEL_SPECS also carries the 13B/70B tiers and GPT-5-mini
+# (added for the S2 supplementary replication) - excluded here so this
+# script's canonical output doesn't silently change scope whenever
+# model_specs.py is extended for other work.
+#
+# Only apply this pin when MODEL_SPECS actually contains small-tier entries.
+# Orchestrators that pre-restrict model_specs.MODEL_SPECS to a disjoint
+# subset before importing this module (e.g. the 13B/70B/S2 selection_
+# mechanism_*.py runners) must not be silently narrowed to nothing --
+# that's exactly what happened to
+# selection_mechanism_gpt5mini_llama70b_mistral13b_qwen72b.py, whose
+# GPT-5-mini/Llama-70B/Mistral-13B/Qwen-72B keys don't intersect
+# ("gpt","llama","mistral","qwen") at all, so an unconditional filter here
+# zeroed out its MODEL_SPECS and crashed load_canonical_runs() downstream.
+_SMALL_KEYS = ("gpt", "llama", "mistral", "qwen")
+if any(spec[0] in _SMALL_KEYS for spec in MODEL_SPECS):
+    MODEL_SPECS = [spec for spec in MODEL_SPECS if spec[0] in _SMALL_KEYS]
 
 warnings.filterwarnings("ignore")
 
@@ -59,6 +156,10 @@ OUT_DIR = "exports/social_selection_feedback"
 CANONICAL_CONDITIONS = ["BASELINE", "NO_DISCUSSION", "NO_SELECTION", "FULL"]
 EVAL_CONDITIONS = {"FULL", "NO_DISCUSSION"}   # evaluation_on == selection_on, see audit
 GROUP_SIZE = 4
+# Reference level for the family fixed effect in step5/step8's OLS formulas.
+# Must be a family actually present in MODEL_SPECS when this module is used
+# with a restricted MODEL_SPECS (e.g. selection_mechanism_llama_mistral_qwen.py).
+REF_FAMILY = "GPT"
 N_AGENTS = 12
 PARTICIPATION_THRESHOLD = 0.3
 TIE_REMOVE_THRESHOLD = 0.15
@@ -286,6 +387,21 @@ def step3_validation(edge_df):
     results["corr_score_vs_weight_change"] = corr
     results["pct_exact_match_eval_only_formula"] = exact_match
 
+    # Empirical OLS companion to the by-construction validation above: even though the
+    # evaluation-only formula is deterministic, the LOGGED edge_weight_change also
+    # absorbs the perception-based channel, tie removal, and the weight cap, so an
+    # actual regression (clustered by run) is the honest way to report this link's
+    # size on the same β/CI footing as the rest of the mechanism chain.
+    m3 = smf.ols("edge_weight_change ~ evaluation_score", data=d).fit(
+        cov_type="cluster", cov_kwds={"groups": d["run_id"]})
+    ci3 = m3.conf_int(alpha=0.05)
+    reg3 = {
+        "term": "evaluation_score", "estimate": m3.params["evaluation_score"],
+        "se": m3.bse["evaluation_score"], "ci_low": ci3.loc["evaluation_score", 0],
+        "ci_high": ci3.loc["evaluation_score", 1], "p_value": m3.pvalues["evaluation_score"],
+        "n": int(m3.nobs), "n_clusters": d["run_id"].nunique(),
+    }
+
     lines = []
     sep = "=" * 74
     lines.append(sep); lines.append("STEP 3 — EVALUATION -> WEIGHT-CHANGE VALIDATION (mechanism check, not a substantive result)"); lines.append(sep)
@@ -299,9 +415,12 @@ def step3_validation(edge_df):
     lines.append("(Deviations are expected and mechanically explained by the second, perception-based "
                  "update channel, plus tie-removal at threshold 0.15 and the max-2.0 cap on that channel "
                  "- these are not noise or model error.)")
+    lines.append(f"\nEmpirical OLS (clustered by run), n={reg3['n']:,}, clusters={reg3['n_clusters']}: "
+                 f"edge_weight_change ~ evaluation_score: b={reg3['estimate']:.4f}  SE={reg3['se']:.4f}  "
+                 f"95%CI=[{reg3['ci_low']:.4f}, {reg3['ci_high']:.4f}]  p={reg3['p_value']:.4g}")
     lines.append("\nMean edge-weight change by evaluation-score bin:")
     lines.append(by_bin.to_string(float_format=lambda x: f"{x:.4f}"))
-    return results, "\n".join(lines)
+    return results, reg3, "\n".join(lines)
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -335,7 +454,7 @@ def step5_analysis(agent_df):
     reg_d = d.dropna(subset=["mean_evaluation_received", "undercontribution"]).copy()
     formula = ('mean_evaluation_received ~ undercontribution '
               '+ C(condition, Treatment(reference="NO_DISCUSSION")) '
-              '+ C(family, Treatment(reference="GPT")) + C(round, Treatment(reference=1))')
+              '+ C(family, Treatment(reference=REF_FAMILY)) + C(round, Treatment(reference=1))')
     m1 = smf.ols(formula, data=reg_d).fit(cov_type="cluster", cov_kwds={"groups": reg_d["run_id"]})
 
     reg_d["run_agent_id"] = reg_d["run_id"] + "_" + reg_d["agent_id"].astype(str)
@@ -460,9 +579,13 @@ def step7_analysis(trans):
         m = smf.ols("was_seed_t_plus_1 ~ avg_incoming_weight_after", data=sel).fit(
             cov_type="cluster", cov_kwds={"groups": sel["run_id"]})
         b, se, p = m.params["avg_incoming_weight_after"], m.bse["avg_incoming_weight_after"], m.pvalues["avg_incoming_weight_after"]
+        ci = m.conf_int(alpha=0.05).loc["avg_incoming_weight_after"]
         lines.append(f"\nA. Seed access (LPM, selection-on conditions only, n={len(sel):,}): "
-                     f"P(seed_t+1) ~ incoming_weight_t: b={b:.4f} SE={se:.4f} p={p:.4g}")
-        results["seed_access_coef"] = b; results["seed_access_p"] = p; results["seed_access_n"] = len(sel)
+                     f"P(seed_t+1) ~ incoming_weight_t: b={b:.4f} SE={se:.4f} "
+                     f"95%CI=[{ci[0]:.4f}, {ci[1]:.4f}] p={p:.4g}")
+        results["seed_access_coef"] = b; results["seed_access_se"] = se; results["seed_access_p"] = p; results["seed_access_n"] = len(sel)
+        results["seed_access_ci_low"] = ci[0]; results["seed_access_ci_high"] = ci[1]
+        results["seed_access_n_clusters"] = sel["run_id"].nunique()
 
     # B. group reassignment
     active = trans[trans["active_t_plus_1"].fillna(0).astype(bool)].dropna(
@@ -538,7 +661,7 @@ def step8_analysis(trans):
     reg_d["selection_on"] = reg_d["selection_on"].astype(int)
     reg_d["discussion_on"] = reg_d["discussion_on"].astype(int)
     formula_chg = ('contribution_change_t_plus_1 ~ undercontribution * selection_on * discussion_on '
-                  '+ contribution + C(family, Treatment(reference="GPT")) + C(round_t, Treatment(reference=1))')
+                  '+ contribution + C(family, Treatment(reference=REF_FAMILY)) + C(round_t, Treatment(reference=1))')
     m_chg = smf.ols(formula_chg, data=reg_d).fit(cov_type="cluster", cov_kwds={"groups": reg_d["run_id"]})
 
     # exclusion model: LPM + logistic, among all agents active at t
@@ -546,7 +669,7 @@ def step8_analysis(trans):
     reg_e["selection_on"] = reg_e["selection_on"].astype(int)
     reg_e["discussion_on"] = reg_e["discussion_on"].astype(int)
     formula_exc = ('excluded_t_plus_1 ~ undercontribution * selection_on * discussion_on '
-                  '+ C(family, Treatment(reference="GPT")) + C(round_t, Treatment(reference=1))')
+                  '+ C(family, Treatment(reference=REF_FAMILY)) + C(round_t, Treatment(reference=1))')
     m_exc_lpm = smf.ols(formula_exc, data=reg_e).fit(cov_type="cluster", cov_kwds={"groups": reg_e["run_id"]})
     try:
         m_exc_logit = smf.logit(formula_exc, data=reg_e).fit(disp=0, cov_type="cluster",
@@ -584,12 +707,44 @@ def step8_analysis(trans):
     correction_selection_on = b0 + b_sel
     additional_correction = b_sel
 
+    # correction_off's CI is just the "undercontribution" term's own CI. correction_on
+    # is a SUM of two coefficients (undercontribution + undercontribution:selection_on),
+    # so its CI needs the combined variance, not either term's CI alone - same delta-method
+    # logic as wald_contrast() in behavior_quantified.py, sum instead of difference.
+    ci_chg = m_chg.conf_int(alpha=0.05)
+    correction_off_ci = (ci_chg.loc["undercontribution", 0], ci_chg.loc["undercontribution", 1])
+    cov_chg = m_chg.cov_params()
+    se_on = np.sqrt(cov_chg.loc["undercontribution", "undercontribution"]
+                    + cov_chg.loc["undercontribution:selection_on", "undercontribution:selection_on"]
+                    + 2 * cov_chg.loc["undercontribution", "undercontribution:selection_on"])
+    z95 = 1.959963984540054
+    correction_on_ci = (correction_selection_on - z95 * se_on, correction_selection_on + z95 * se_on)
+    p_correction_on = float(2 * (1 - sstats.norm.cdf(abs(correction_selection_on / se_on))))
+
     exc_sel_term = "undercontribution:selection_on"
     exc_three_way = "undercontribution:selection_on:discussion_on"
     b_exc_sel = m_exc_lpm.params.get(exc_sel_term, np.nan)
     p_exc_sel = m_exc_lpm.pvalues.get(exc_sel_term, np.nan)
     b_exc_3way = m_exc_lpm.params.get(exc_three_way, np.nan)
     p_exc_3way = m_exc_lpm.pvalues.get(exc_three_way, np.nan)
+
+    # Exclusion rate per condition, done properly: a clustered-SE proportion (OLS on an
+    # intercept, cov_type=cluster), not the unweighted mean-of-bins the table used before
+    # (which doesn't weight by bin size and has no CI). Only NO_DISCUSSION/FULL have
+    # selection on, so only those two are meaningfully nonzero.
+    excl_rate_by_cond = {}
+    for cond in ["NO_DISCUSSION", "FULL"]:
+        sub = active_t[(active_t["condition"] == cond)].dropna(subset=["excluded_t_plus_1"])
+        if len(sub) == 0:
+            continue
+        m_r = smf.ols("excluded_t_plus_1 ~ 1", data=sub).fit(
+            cov_type="cluster", cov_kwds={"groups": sub["run_id"]})
+        ci_r = m_r.conf_int(alpha=0.05)
+        excl_rate_by_cond[cond] = {
+            "rate": m_r.params["Intercept"], "se": m_r.bse["Intercept"], "p_value": m_r.pvalues["Intercept"],
+            "ci_low": max(0.0, ci_r.loc["Intercept", 0]), "ci_high": ci_r.loc["Intercept", 1],
+            "n": len(sub), "n_clusters": sub["run_id"].nunique(),
+        }
 
     lines = []
     sep = "=" * 74
@@ -600,8 +755,9 @@ def step8_analysis(trans):
     lines.append(f"  Correction per unit undercontribution, selection OFF, discussion OFF (BASELINE): {b0:.4f}")
     lines.append(f"  Additional correction from SELECTION alone: {b_sel:.4f}  (p={p_sel:.4g})  "
                  f"{'[borderline, not < .05]' if 0.05 <= p_sel < 0.10 else ('[significant]' if p_sel < 0.05 else '[not significant]')}")
+    disc_over_sel = b_disc / b_sel if b_sel else float("nan")
     lines.append(f"  Additional correction from DISCUSSION alone: {b_disc:.4f}  (p={p_disc:.4g})  "
-                 f"{'[significant, and ~7x larger than the selection effect]' if p_disc < 0.05 else ''}")
+                 f"{f'[significant, and ~{disc_over_sel:.1f}x larger than the selection effect]' if p_disc < 0.05 else ''}")
     if "undercontribution:selection_on:discussion_on" in m_chg.params.index:
         lines.append(f"  Three-way (selection x discussion) interaction: "
                      f"{m_chg.params['undercontribution:selection_on:discussion_on']:.4f}  "
@@ -629,10 +785,15 @@ def step8_analysis(trans):
 
     return (desc, reg_out,
            {"correction_off": correction_selection_off, "correction_on": correction_selection_on,
+            "correction_off_se": m_chg.bse["undercontribution"], "correction_off_p": m_chg.pvalues["undercontribution"],
+            "correction_on_se": se_on, "correction_on_p": p_correction_on,
+            "correction_off_ci_low": correction_off_ci[0], "correction_off_ci_high": correction_off_ci[1],
+            "correction_on_ci_low": correction_on_ci[0], "correction_on_ci_high": correction_on_ci[1],
             "additional_correction": additional_correction, "additional_correction_p": p_sel,
             "discussion_correction": b_disc, "discussion_correction_p": p_disc,
             "exclusion_selection_interaction": b_exc_sel, "exclusion_selection_interaction_p": p_exc_sel,
-            "exclusion_three_way": b_exc_3way, "exclusion_three_way_p": p_exc_3way},
+            "exclusion_three_way": b_exc_3way, "exclusion_three_way_p": p_exc_3way,
+            "exclusion_rate_by_condition": excl_rate_by_cond},
            "\n".join(lines))
 
 
@@ -804,60 +965,90 @@ def plot_fig5_exclusion_by_bin_condition(desc8, out_stub):
 # Step 10: main table
 # ═════════════════════════════════════════════════════════════════════════
 
-def write_main_table(step5_reg, step8_corrections, step8_reg, desc8, out_path):
+def write_main_table(step5_reg, step3_reg, step7_results, step8_corrections, step8_reg, desc8, out_path):
     b5 = step5_reg[step5_reg["model"] == "pooled_ols_with_FE"].iloc[0]
 
-    def ci_str(m, lo, hi):
-        return f"{m:.3f}", f"[{lo:.3f}, {hi:.3f}]"
+    def beta_se(val, se, p, decimals=3):
+        p_str = "p<0.001" if p < 0.001 else f"p={p:.3f}"
+        return f"{val:.{decimals}f} [{se:.{decimals}f}], {p_str}"
 
-    off_val, off_ci = ci_str(step8_corrections["correction_off"], np.nan, np.nan)
-    on_val, on_ci = ci_str(step8_corrections["correction_on"], np.nan, np.nan)
+    off_cell = beta_se(step8_corrections["correction_off"], step8_corrections["correction_off_se"],
+                       step8_corrections["correction_off_p"])
+    on_cell = beta_se(step8_corrections["correction_on"], step8_corrections["correction_on_se"],
+                      step8_corrections["correction_on_p"])
+
     add_row = step8_reg[(step8_reg["model"] == "contribution_change_model")
                         & (step8_reg["term"] == "undercontribution:selection_on")]
-    add_val = f"{add_row['estimate'].iloc[0]:.3f}" if len(add_row) else "n/a"
-    add_ci = (f"[{add_row['ci_low'].iloc[0]:.3f}, {add_row['ci_high'].iloc[0]:.3f}]" if len(add_row) else "n/a")
-
-    excl_nd = desc8[desc8["condition"] == "NO_DISCUSSION"]["pct_excluded_before_next_contribution"].mean()
-    excl_full = desc8[desc8["condition"] == "FULL"]["pct_excluded_before_next_contribution"].mean()
+    add_cell = (beta_se(add_row["estimate"].iloc[0], add_row["se"].iloc[0], add_row["p_value"].iloc[0])
+               if len(add_row) else "n/a")
 
     disc_row = step8_reg[(step8_reg["model"] == "contribution_change_model")
                         & (step8_reg["term"] == "undercontribution:discussion_on")]
-    disc_val = f"{disc_row['estimate'].iloc[0]:.3f}" if len(disc_row) else "n/a"
-    disc_ci = (f"[{disc_row['ci_low'].iloc[0]:.3f}, {disc_row['ci_high'].iloc[0]:.3f}]" if len(disc_row) else "n/a")
+    disc_cell = (beta_se(disc_row["estimate"].iloc[0], disc_row["se"].iloc[0], disc_row["p_value"].iloc[0])
+                if len(disc_row) else "n/a")
+
     exc3_row = step8_reg[(step8_reg["model"] == "exclusion_model_LPM")
                         & (step8_reg["term"] == "undercontribution:selection_on:discussion_on")]
-    exc3_val = f"{exc3_row['estimate'].iloc[0]:.4f}" if len(exc3_row) else "n/a"
-    exc3_ci = (f"[{exc3_row['ci_low'].iloc[0]:.4f}, {exc3_row['ci_high'].iloc[0]:.4f}]" if len(exc3_row) else "n/a")
+    exc3_cell = (beta_se(exc3_row["estimate"].iloc[0], exc3_row["se"].iloc[0], exc3_row["p_value"].iloc[0], decimals=4)
+                if len(exc3_row) else "n/a")
+
+    excl_by_cond = step8_corrections["exclusion_rate_by_condition"]
+    excl_nd = excl_by_cond["NO_DISCUSSION"]
+    excl_full = excl_by_cond["FULL"]
+
+    disc_over_sel_ratio = (disc_row["estimate"].iloc[0] / add_row["estimate"].iloc[0]
+                           if len(disc_row) and len(add_row) and add_row["estimate"].iloc[0] != 0 else float("nan"))
 
     lines = [
-        r"\begin{table}[t]", r"\centering", r"\small", r"\begin{tabular}{lcc}", r"\toprule",
-        r" & Estimate & 95\% CI \\", r"\midrule",
-        rf"Undercontribution$_t$ $\rightarrow$ evaluation received$_t$ & {b5['estimate']:.3f} & "
-        rf"[{b5['ci_low']:.3f}, {b5['ci_high']:.3f}] \\",
+        r"\begin{table}[t]", r"\centering", r"\small", r"\begin{tabular}{lc}", r"\toprule",
+        r"Link & $\beta$ [SE], $p$ \\", r"\midrule",
+        rf"Undercontribution$_t$ $\rightarrow$ evaluation received$_t$ & "
+        rf"{beta_se(b5['estimate'], b5['se'], b5['p_value'])} \\",
         r"\addlinespace",
-        rf"Undercontribution$_t$ $\rightarrow$ next contribution change, selection off & {off_val} & --- \\",
+        rf"Evaluation received$_t$ $\rightarrow$ tie weight change$_t$ & "
+        rf"{beta_se(step3_reg['estimate'], step3_reg['se'], step3_reg['p_value'])} \\",
         r"\addlinespace",
-        rf"Undercontribution$_t$ $\rightarrow$ next contribution change, selection on & {on_val} & --- \\",
+        rf"Tie weight$_t$ $\rightarrow$ future interaction probability (group-seed access)$_{{t+1}}$ & "
+        rf"{beta_se(step7_results['seed_access_coef'], step7_results['seed_access_se'], step7_results['seed_access_p'])} \\",
         r"\addlinespace",
-        rf"Additional correction under selection & {add_val} & {add_ci} \\",
+        rf"Undercontribution$_t$ $\rightarrow$ next contribution change, selection off & {off_cell} \\",
         r"\addlinespace",
-        rf"Additional correction under discussion (dominant effect) & {disc_val} & {disc_ci} \\",
+        rf"Undercontribution$_t$ $\rightarrow$ next contribution change, selection on & {on_cell} \\",
+        r"\addlinespace",
+        rf"Additional correction under selection & {add_cell} \\",
+        r"\addlinespace",
+        rf"Additional correction under discussion (dominant effect) & {disc_cell} \\",
         r"\midrule",
-        rf"Exclusion rate, No Discussion & {excl_nd:.3f} & --- \\",
-        rf"Exclusion rate, Full & {excl_full:.3f} & --- \\",
-        rf"Discussion $\times$ selection $\times$ undercontribution on exclusion & {exc3_val} & {exc3_ci} \\",
+        rf"Exclusion rate, No Discussion & {beta_se(excl_nd['rate'], excl_nd['se'], excl_nd['p_value'])} \\",
+        rf"Exclusion rate, Full & {beta_se(excl_full['rate'], excl_full['se'], excl_full['p_value'])} \\",
+        rf"Discussion $\times$ selection $\times$ undercontribution on exclusion & {exc3_cell} \\",
         r"\bottomrule", r"\end{tabular}",
-        (r"\caption{Corrective feedback under social selection. Undercontribution is the mean "
+        (r"\caption{The full corrective-feedback chain under social selection: "
+         r"undercontribution $\to$ evaluation $\to$ tie weight $\to$ future interaction $\to$ "
+         r"contribution adjustment. Undercontribution is the mean "
          r"contribution of the focal agent's groupmates minus the focal contribution, so positive "
-         r"values indicate contributing below one's group. The first row tests whether behavioral "
+         r"values indicate contributing below one's group. Row 1 tests whether behavioral "
          r"deviation receives poorer peer evaluation (FULL/NO\_DISCUSSION only - the only conditions "
-         r"with evaluation\_on=True). The next rows test whether undercontributors adjust their next "
-         r"contribution differently when network-based selection vs. discussion is active - discussion's "
-         r"own effect is roughly 7x selection's and is the dominant driver of correction, added here "
-         r"beyond the originally suggested template because omitting it would misrepresent the result. "
+         r"with evaluation\_on=True). Row 2 regresses each edge's logged weight change on the "
+         r"evaluation score that produced it; the relationship is partly mechanical by construction "
+         r"(update\_network()'s deterministic formula) but the logged change also absorbs a second, "
+         r"perception-based update channel, so the OLS estimate is reported on the same footing as the "
+         r"rest of the chain rather than only described qualitatively. Row 3 asks whether an agent's own "
+         r"incoming tie weight predicts becoming a group-formation seed next round (a linear probability "
+         r"model) - group-seeds anchor who they interact with next, so this stands in for \"future "
+         r"interaction probability.\" The remaining rows test whether undercontributors adjust their next "
+         rf"contribution differently when network-based selection vs. discussion is active - discussion's "
+         rf"own effect is roughly {disc_over_sel_ratio:.1f}x selection's and is the dominant driver of "
+         r"correction, added here "
+         r"beyond the originally suggested template because omitting it would misrepresent the result "
+         r"(the \"selection on\" row's SE reflects the combined variance of the base and interaction "
+         r"terms via the delta method, not either coefficient's SE alone). "
          r"Exclusion is analyzed separately because excluded agents have no next-round contribution; the "
          r"final row shows discussion significantly dampens the exclusion risk that undercontribution "
-         r"creates under selection. SEs clustered by run. Observational; not a causal estimate.}"),
+         r"creates under selection. Exclusion rates are cluster-robust proportions (OLS on an intercept, "
+         r"SEs clustered by run), not raw sample means. SEs clustered by run throughout, shown in "
+         r"brackets, alongside the p-value from the same model each estimate came from. Observational; "
+         r"not a causal estimate.}"),
         r"\label{tab:selection_feedback}", r"\end{table}",
     ]
     text = "\n".join(lines) + "\n"
@@ -870,7 +1061,7 @@ def write_main_table(step5_reg, step8_corrections, step8_reg, desc8, out_path):
 # Final summary
 # ═════════════════════════════════════════════════════════════════════════
 
-def write_summary(step5_reg, step8_corrections, step8_reg, desc8, step3_text, step7_results, out_path):
+def write_summary(step5_reg, step3_reg, step8_corrections, step8_reg, desc8, step3_text, step7_results, out_path):
     b5 = step5_reg[step5_reg["model"] == "pooled_ols_with_FE"].iloc[0]
     off = step8_corrections["correction_off"]
     on = step8_corrections["correction_on"]
@@ -882,6 +1073,7 @@ def write_summary(step5_reg, step8_corrections, step8_reg, desc8, step3_text, st
     exc_sel_p = step8_corrections["exclusion_selection_interaction_p"]
     exc_3way_b = step8_corrections["exclusion_three_way"]
     exc_3way_p = step8_corrections["exclusion_three_way_p"]
+    excl_by_cond = step8_corrections["exclusion_rate_by_condition"]
 
     eval_link_significant = b5["p_value"] < 0.05 and b5["estimate"] < 0
     selection_correction_significant = (not np.isnan(add_p)) and add_p < 0.05 and add > 0
@@ -940,12 +1132,23 @@ def write_summary(step5_reg, step8_corrections, step8_reg, desc8, step3_text, st
         f"(p={b5['p_value']:.4g}). "
         + ("Supported: greater undercontribution predicts worse evaluation." if eval_link_significant
            else "Not clearly supported at p<.05 in the direction expected."),
-        f"2. **Evaluation -> weight change**: programmed by construction (`update_network()`), verified "
-        "not violated in the logs; see evaluation_weight_validation.csv. Not a discovered statistical "
-        "relationship - flagged as design validation.",
-        "3. **Lower weight -> altered selection/exclusion**: see selection_consequence_results.csv for "
-        "seed-access, group-reassignment, future-groupmate-quality, and the exclusion-threshold design "
-        "check.",
+        f"2. **Evaluation -> tie weight change** (n={step3_reg['n']:,}, clustered by run, "
+        f"evaluation_weight_validation.csv): b={step3_reg['estimate']:.4f} "
+        f"(95% CI [{step3_reg['ci_low']:.4f}, {step3_reg['ci_high']:.4f}], p={step3_reg['p_value']:.4g}). "
+        "Partly mechanical by construction (`update_network()`'s deterministic formula, verified not "
+        "violated in the logs) but the logged change also absorbs a second, perception-based update "
+        "channel plus tie-removal/capping, so this OLS estimate is reported rather than only described "
+        "qualitatively - positive evaluation predicts a larger tie-weight gain.",
+        f"3. **Tie weight -> future interaction probability** (group-formation seed access next round, "
+        f"LPM, n={step7_results.get('seed_access_n', 'n/a'):,}, selection-on conditions only, "
+        "selection_consequence_results.csv): "
+        + (f"b={step7_results['seed_access_coef']:.4f} (95% CI "
+           f"[{step7_results['seed_access_ci_low']:.4f}, {step7_results['seed_access_ci_high']:.4f}], "
+           f"p={step7_results['seed_access_p']:.4g}) - higher incoming tie weight predicts a higher "
+           "probability of anchoring (seeding) one's next group, i.e. more influence over future "
+           "interactions. Group-reassignment and future-groupmate-quality are related but secondary "
+           "measures of the same link; see selection_consequence_results.csv for those."
+           if "seed_access_coef" in step7_results else "not available."),
         f"4. **Behavioral correction, selection's own effect**: correction per unit undercontribution is "
         f"{off:.4f} at baseline vs. {on:.4f} with selection on (additional correction = "
         f"{add:.4f}, p={add_p:.4g}). "
@@ -964,7 +1167,17 @@ def write_summary(step5_reg, step8_corrections, step8_reg, desc8, step3_text, st
         outcome_3,
         "",
         "## Exclusion rates by condition",
-        desc8.groupby("condition")["pct_excluded_before_next_contribution"].mean().to_string(),
+        "Cluster-robust proportions (OLS on an intercept, SEs clustered by run), not raw sample means. "
+        "BASELINE/NO_SELECTION are structurally 0 - exclusion cannot occur without selection_on.",
+        "- BASELINE: 0.0000",
+        "- NO_SELECTION: 0.0000",
+        (f"- NO_DISCUSSION: {excl_by_cond['NO_DISCUSSION']['rate']:.4f} "
+         f"(95% CI [{excl_by_cond['NO_DISCUSSION']['ci_low']:.4f}, "
+         f"{excl_by_cond['NO_DISCUSSION']['ci_high']:.4f}], n={excl_by_cond['NO_DISCUSSION']['n']:,})"
+         if "NO_DISCUSSION" in excl_by_cond else "- NO_DISCUSSION: n/a"),
+        (f"- FULL: {excl_by_cond['FULL']['rate']:.4f} "
+         f"(95% CI [{excl_by_cond['FULL']['ci_low']:.4f}, {excl_by_cond['FULL']['ci_high']:.4f}], "
+         f"n={excl_by_cond['FULL']['n']:,})" if "FULL" in excl_by_cond else "- FULL: n/a"),
         "",
         "## Final scientific interpretation",
         outcome_1,
@@ -1010,10 +1223,10 @@ def write_summary(step5_reg, step8_corrections, step8_reg, desc8, step3_text, st
 # Main
 # ═════════════════════════════════════════════════════════════════════════
 
-def main():
+def run_pipeline(label="7b"):
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    print("Loading canonical runs and building edge-level + agent-round datasets "
+    print(f"[{label}] Loading canonical runs and building edge-level + agent-round datasets "
          "(this iterates every round of every canonical run once)...")
     runs, edge_df, agent_df = build_core_datasets()
     print(f"  {len(runs)} canonical runs, {len(edge_df):,} evaluation events, "
@@ -1023,8 +1236,9 @@ def main():
     audit2_text = step2_audit(edge_df, runs)
     print("\n" + audit2_text)
 
-    step3_results, step3_text = step3_validation(edge_df)
+    step3_results, step3_reg, step3_text = step3_validation(edge_df)
     step3_results.to_csv(os.path.join(OUT_DIR, "evaluation_weight_validation.csv"), index=False)
+    pd.DataFrame([step3_reg]).to_csv(os.path.join(OUT_DIR, "evaluation_weight_regression.csv"), index=False)
     print("\n" + step3_text)
 
     agent_df.to_csv(os.path.join(OUT_DIR, "agent_round_evaluation_panel.csv"), index=False)
@@ -1058,10 +1272,10 @@ def main():
     plot_fig3_correction_by_condition(desc8, os.path.join(OUT_DIR, "figure3_correction_by_condition"))
     plot_fig5_exclusion_by_bin_condition(desc8, os.path.join(OUT_DIR, "figure5_exclusion_by_bin_condition"))
 
-    tex_text = write_main_table(step5_reg, step8_corrections, step8_reg, desc8,
+    tex_text = write_main_table(step5_reg, step3_reg, step7_results, step8_corrections, step8_reg, desc8,
                                 os.path.join(OUT_DIR, "social_selection_main_table.tex"))
 
-    summary_text, final_outcome = write_summary(step5_reg, step8_corrections, step8_reg, desc8,
+    summary_text, final_outcome = write_summary(step5_reg, step3_reg, step8_corrections, step8_reg, desc8,
                                                 step3_text, step7_results,
                                                 os.path.join(OUT_DIR, "social_selection_summary.md"))
 
@@ -1080,6 +1294,84 @@ def main():
                  "figure4_pre_exclusion_event_study.png", "figure4_pre_exclusion_event_study.pdf",
                  "figure5_exclusion_by_bin_condition.png", "figure5_exclusion_by_bin_condition.pdf"]:
         print(f"  {os.path.join(OUT_DIR, fname)}")
+
+    if PUBLISH_DIR and os.path.abspath(PUBLISH_DIR) != os.path.abspath(OUT_DIR):
+        import shutil
+        os.makedirs(PUBLISH_DIR, exist_ok=True)
+        for fname in os.listdir(OUT_DIR):
+            src = os.path.join(OUT_DIR, fname)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(PUBLISH_DIR, fname))
+        print(f"[{label}] Published -> {PUBLISH_DIR}")
+
+
+# 2026-08-24: PUBLISH_DIR is a module global (like OUT_DIR/REF_FAMILY/N_AGENTS/
+# GROUP_SIZE above) so run_pipeline() can read it after configure_tier() sets it.
+PUBLISH_DIR = None
+
+
+def configure_tier(tier, setting=None):
+    """Sets MODEL_SPECS/OUT_DIR/REF_FAMILY/N_AGENTS/GROUP_SIZE/PUBLISH_DIR for
+    one --tier run. Returns a label for logging/export naming."""
+    global MODEL_SPECS, OUT_DIR, REF_FAMILY, N_AGENTS, GROUP_SIZE, PUBLISH_DIR
+
+    if tier in TIER_FAMILY_SPECS:
+        MODEL_SPECS = TIER_FAMILY_SPECS[tier]
+        REF_FAMILY = TIER_REF_FAMILY[tier]
+        N_AGENTS, GROUP_SIZE = 12, 4
+        # 7b keeps the script's original OUT_DIR unchanged (exports/social_selection_feedback,
+        # relative to cwd) -- this is the established canonical MAIN location other
+        # things already point at; only s2 gets a new dedicated export dir.
+        OUT_DIR = "exports/social_selection_feedback" if tier == "7b" else \
+            f"{BASE}/code/analysis/exports/social_selection_feedback_{tier}"
+        PUBLISH_DIR = TIER_PUBLISH_DIR[tier]
+        return tier
+
+    spec = STRUCTURAL_TIER_SPECS[tier][setting]
+    MODEL_SPECS = spec["specs"]
+    N_AGENTS, GROUP_SIZE = spec["n_agents"], spec["group_size"]
+    families_present = sorted({s[1] for s in MODEL_SPECS})
+    REF_FAMILY = "Mistral-7B" if "Mistral-7B" in families_present else families_present[0]
+    label = f"{tier}_{setting}"
+    OUT_DIR = f"{BASE}/code/analysis/exports/social_selection_feedback/tier_{tier}/{setting}"
+    PUBLISH_DIR = os.path.join(STRUCTURAL_PUBLISH_ROOT, tier, "6_social_selection_per_link", setting)
+    return label
+
+
+def main():
+    """CLI entry point (`--tier` dispatch). Existing wrapper scripts
+    (selection_mechanism_llama_mistral_qwen.py,
+    selection_mechanism_gpt5mini_llama70b_mistral13b_qwen72b.py) call this
+    directly after monkeypatching MODEL_SPECS/OUT_DIR/REF_FAMILY themselves
+    -- when run that way (no CLI args), --tier defaults to None and this
+    just runs the pipeline once against whatever globals are already set,
+    preserving their pre-2026-08-24 behavior. Only an explicit --tier
+    (i.e. running this file directly) engages the new tier dispatch."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Social-selection feedback-chain analysis.")
+    parser.add_argument("--tier", choices=["7b", "s2", "community", "group", "mcpr", "all"], default=None,
+                        help="7b = MAIN; s2 = supplementary replication; "
+                             "community/group/mcpr = structural robustness (all settings per axis). "
+                             "Omit to run once against whatever MODEL_SPECS/OUT_DIR/REF_FAMILY are "
+                             "already set (back-compat for the selection_mechanism_*.py wrapper scripts).")
+    args, _unknown = parser.parse_known_args()
+
+    if args.tier is None:
+        run_pipeline("7b")
+        return
+
+    tiers = ["7b", "s2", "community", "group", "mcpr"] if args.tier == "all" else [args.tier]
+    for tier in tiers:
+        if tier in TIER_FAMILY_SPECS:
+            label = configure_tier(tier)
+            print(f"\n{'#'*74}\n# TIER: {label}  (families: {[s[1] for s in MODEL_SPECS]})\n{'#'*74}")
+            run_pipeline(label)
+        else:
+            for setting in STRUCTURAL_TIER_SPECS[tier]:
+                label = configure_tier(tier, setting)
+                print(f"\n{'#'*74}\n# TIER: {label}  (families: {[s[1] for s in MODEL_SPECS]}, "
+                     f"N={N_AGENTS}, G={GROUP_SIZE})\n{'#'*74}")
+                run_pipeline(label)
 
 
 if __name__ == "__main__":

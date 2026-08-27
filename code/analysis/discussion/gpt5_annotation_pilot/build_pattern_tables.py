@@ -23,7 +23,7 @@ import pandas as pd
 # (code/analysis/gpt5_annotation_pilot/ -> code/analysis/discussion/gpt5_annotation_pilot/),
 # so anchoring to code/analysis/ needs a 3rd dirname() hop now, not 2.
 _ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
-while not os.path.exists(os.path.join(_ANALYSIS_DIR, "sobel_mediation.py")):
+while not os.path.exists(os.path.join(_ANALYSIS_DIR, "model_specs.py")):
     _ANALYSIS_DIR = os.path.dirname(_ANALYSIS_DIR)
 
 RUN_DIR = os.path.join(_ANALYSIS_DIR, "exports", "gpt5_annotation_pilot", "full_corpus_run")

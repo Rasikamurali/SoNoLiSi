@@ -7,13 +7,11 @@ the core functions — no permanent changes to the original scripts.
 
 Steps:
   1.  Completeness check — verify 10 seeds × 5 conditions per model
-  2.  stability_analysis — SD convergence plots
+  2.  Perceptual consensus — SD convergence, via perception_consensus.py (subprocess, 2026-08-24)
   3.  Contribution trajectory — mean contribution over rounds (custom)
-  4.  Cooperation tendency — CT over rounds (custom)
   5.  Per-seed behavioral plots — via temp_evals_behavior.plot_per_seed
-  6.  Network development — via temp_eval_network
-  7.  Perception-action gap — via temp_eval_alignment2
-  8.  OLS + LME stats — behavior_quantified and perception_quantified (subprocess)
+  7.  Perception-action gap — via perception_action_gap_plot.py (subprocess, 2026-08-24)
+  8.  OLS + LME stats — behavior_quantified (subprocess)
 """
 
 import subprocess
@@ -26,6 +24,7 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+from scipy import stats as _stats
 
 warnings.filterwarnings("ignore")
 
@@ -37,9 +36,9 @@ CODE_DIR  = os.path.dirname(os.path.abspath(__file__))
 
 # Reorg (2026-08-11): see run_13b_analysis.py for why this block exists.
 ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
-while not os.path.exists(os.path.join(ANALYSIS_DIR, "sobel_mediation.py")):
+while not os.path.exists(os.path.join(ANALYSIS_DIR, "model_specs.py")):
     ANALYSIS_DIR = os.path.dirname(ANALYSIS_DIR)
-SCRIPT_SUBFOLDER = {"behavior_quantified.py": "behavioral", "perception_quantified.py": "perception"}
+SCRIPT_SUBFOLDER = {"behavior_quantified.py": "behavioral"}
 
 MODELS     = ["gpt", "llama", "mistral", "qwen"]
 MODEL_LABELS = {"gpt": "GPT-4o-mini", "llama": "Llama 3.1-8B",
@@ -104,47 +103,40 @@ def check_completeness():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_stability():
+    """Superseded 2026-08-24 by perception_consensus.py (item a of the
+    perception/alignment consolidation) -- run as a subprocess since that
+    script is tier-parametrized via --tier rather than monkeypatched
+    globals. Writes the SD-convergence plot + early/late and continuous-
+    slope tables straight to figures/MAIN_RESULTS/3_dn_in_convergence/."""
     print("=" * 60)
-    print("STABILITY ANALYSIS — local variant")
+    print("PERCEPTUAL CONSENSUS (perception_consensus.py) — 7b tier")
     print("=" * 60)
 
-    for _p in [ANALYSIS_DIR] + [
-        os.path.join(ANALYSIS_DIR, d) for d in os.listdir(ANALYSIS_DIR)
-        if os.path.isdir(os.path.join(ANALYSIS_DIR, d)) and not d.startswith((".", "__"))
-    ]:
-        if _p not in sys.path:
-            sys.path.insert(0, _p)
-
-    import stability_analysis as sa
-
-    # Patch module globals
-    sa.VARIANT  = VARIANT
-    sa.SEEDS    = SEEDS
-    sa.FIG_ROOT = FIG_ROOT
-    sa.MODELS   = MODELS
-
-    store = sa.build_store()
-
-    # Count loaded seeds
-    for model in MODELS:
-        for cond in ["FULL", "BASELINE"]:
-            n = len(store[model].get(cond, {}))
-            print(f"  {MODEL_LABELS[model]} / {cond}: {n} seeds loaded")
-
-    sa.plot_stability(store)
-    print(f"  Saved: {os.path.join(FIG_ROOT, 'cross_model', 'stability_analysis.png')}")
+    script_path = os.path.join(ANALYSIS_DIR, "perception", "perception_consensus.py")
+    result = subprocess.run([sys.executable, script_path, "--tier", "7b"],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"  [WARN] perception_consensus.py exited with code {result.returncode}")
+        if result.stderr:
+            print(result.stderr[-1000:])
+    else:
+        lines = [l for l in result.stdout.splitlines() if l.strip()]
+        for l in lines[-10:]:
+            print(f"    {l}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3. CONTRIBUTION TRAJECTORIES — custom plot, same style as existing figures
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Colorblind-safe categorical palette (dataviz skill reference palette, slots 1-5,
+# validated: worst adjacent CVD ΔE 9.1, worst adjacent normal-vision ΔE 19.6).
 COND_COLORS = {
-    "FULL":          "#1f77b4",
-    "NO_DISCUSSION": "#ff7f0e",
-    "NO_SELECTION":  "#2ca02c",
-    "BASELINE":      "#9467bd",
-    "PURE_BASELINE": "#7f7f7f",
+    "FULL":          "#2a78d6",  # blue
+    "NO_DISCUSSION": "#eb6834",  # orange
+    "NO_SELECTION":  "#1baf7a",  # aqua
+    "BASELINE":      "#eda100",  # yellow
+    "PURE_BASELINE": "#e87ba4",  # magenta
 }
 COND_LABELS = {
     "FULL":          "Full",
@@ -179,6 +171,19 @@ def build_contribution_store():
     return store
 
 
+def mean_ci95(arr):
+    """
+    arr: one row per seed/run (run-clustered). Returns (mean, half-width) for a
+    t-based 95% CI, df = n_seeds - 1 per round (n_seeds ~10, so notably wider
+    than a z=1.96 approximation).
+    """
+    n = np.sum(~np.isnan(arr), axis=0)
+    mean = np.nanmean(arr, axis=0)
+    se = np.nanstd(arr, axis=0, ddof=1) / np.sqrt(np.where(n > 1, n, np.nan))
+    tcrit = _stats.t.ppf(0.975, np.maximum(n - 1, 1))
+    return mean, tcrit * se
+
+
 def plot_contribution_trajectories(store):
     """
     4 rows (models) × 5 cols (conditions).
@@ -197,11 +202,10 @@ def plot_contribution_trajectories(store):
             seed_data = store[model][cond]
 
             if seed_data:
-                arr  = np.array(list(seed_data.values()), dtype=float)
-                mean = np.nanmean(arr, axis=0)
-                se   = np.nanstd(arr, axis=0) / np.sqrt(np.sum(~np.isnan(arr), axis=0))
+                arr = np.array(list(seed_data.values()), dtype=float)
+                mean, ci = mean_ci95(arr)
                 ax.plot(rounds, mean, color=COND_COLORS[cond], linewidth=2)
-                ax.fill_between(rounds, mean - se, mean + se,
+                ax.fill_between(rounds, mean - ci, mean + ci,
                                 color=COND_COLORS[cond], alpha=0.2)
                 ax.text(0.97, 0.07, f"n={len(seed_data)}",
                         transform=ax.transAxes, ha="right", fontsize=9, color="gray")
@@ -233,47 +237,27 @@ def plot_contribution_trajectories(store):
     print(f"  Saved: contribution_trajectories_local.png/.pdf")
 
 
-def plot_contribution_all_conditions(store):
-    """
-    Single plot: all 5 conditions on same axes, one panel per model.
-    Easier to compare conditions within a model.
-    """
-    rounds = np.array(ROUNDS)
-    fig, axes = plt.subplots(1, len(MODELS), figsize=(4.5 * len(MODELS), 4.5), sharey=True)
-
-    for ax, model in zip(axes, MODELS):
-        for cond in PLOT_CONDITIONS:
-            seed_data = store[model][cond]
-            if not seed_data:
-                continue
-            arr  = np.array(list(seed_data.values()), dtype=float)
-            mean = np.nanmean(arr, axis=0)
-            se   = np.nanstd(arr, axis=0) / np.sqrt(np.sum(~np.isnan(arr), axis=0))
-            ax.plot(rounds, mean, color=COND_COLORS[cond], linewidth=2,
-                    label=COND_LABELS[cond])
-            ax.fill_between(rounds, mean - se, mean + se,
-                            color=COND_COLORS[cond], alpha=0.15)
-
-        ax.axhline(ENDOWMENT / 2, color="gray", linestyle=":", linewidth=1, alpha=0.4)
-        ax.set_title(MODEL_LABELS[model], fontsize=LABEL_SIZE, fontweight="bold")
-        ax.set_xlabel("Round", fontsize=TICK_SIZE)
-        ax.set_ylim(0, ENDOWMENT + 0.5)
-        ax.xaxis.set_major_locator(ticker.MultipleLocator(5))
-        ax.tick_params(labelsize=TICK_SIZE)
-        ax.grid(True, alpha=0.2)
-        if ax == axes[0]:
-            ax.set_ylabel("Mean Contribution", fontsize=LABEL_SIZE)
-            ax.legend(fontsize=LEGEND_SIZE, loc="lower right")
-
-    fig.suptitle("Contribution by Condition — Local Variant",
-                 fontsize=LABEL_SIZE + 2, y=1.01)
-    plt.tight_layout()
-
-    out = os.path.join(FIG_ROOT, "cross_model", "all_conditions_local.pdf")
-    fig.savefig(out, bbox_inches="tight")
-    fig.savefig(out.replace(".pdf", ".png"), dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"  Saved: all_conditions_local.png/.pdf")
+def run_contribution_all_conditions_plot():
+    print("=" * 60)
+    print("CONTRIBUTION TRAJECTORIES (all conditions overlaid) — local variant")
+    print("=" * 60)
+    out_dir = "/data3/rasimura/social-norm-evo/figures/MAIN_RESULTS/1_contribution_trajectories"
+    script_path = os.path.join(ANALYSIS_DIR, "behavioral", "contribution_all_conditions_plot.py")
+    cmd = ([sys.executable, script_path,
+            "--variant", VARIANT, "--models"] + MODELS
+           + ["--seeds"] + [str(s) for s in SEEDS]
+           + ["--results-dir", RESULTS,
+              "--out-dir", out_dir,
+              "--out-name", "all_conditions_local",
+              "--model-labels"] + [f"{k}={v}" for k, v in MODEL_LABELS.items()])
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"  [WARN] contribution_all_conditions_plot.py exited with code {result.returncode}")
+        if result.stderr:
+            print(result.stderr[-1500:])
+    else:
+        for line in [l for l in result.stdout.splitlines() if l.strip()]:
+            print(f"    {line}")
 
 
 def run_contribution_plots():
@@ -289,75 +273,9 @@ def run_contribution_plots():
 
     print()
     plot_contribution_trajectories(store)
-    plot_contribution_all_conditions(store)
+    run_contribution_all_conditions_plot()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 4. COOPERATION TENDENCY — CT over rounds per condition
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def build_ct_store():
-    store = {m: {c: {} for c in PLOT_CONDITIONS} for m in MODELS}
-    for model in MODELS:
-        for cond in PLOT_CONDITIONS:
-            for seed in SEEDS:
-                d = load_latest_log(model, seed, cond)
-                if d is None:
-                    continue
-                series = []
-                for rlog in d["round_logs"]:
-                    states = rlog.get("agent_states", [])
-                    cts    = [s["cooperation_tendency"] for s in states]
-                    series.append(np.mean(cts) if cts else np.nan)
-                if len(series) == len(ROUNDS):
-                    store[model][cond][seed] = series
-    return store
-
-
-def plot_ct_trajectories(store):
-    rounds = np.array(ROUNDS)
-    fig, axes = plt.subplots(1, len(MODELS), figsize=(4.5 * len(MODELS), 4.5), sharey=True)
-
-    for ax, model in zip(axes, MODELS):
-        for cond in ["FULL", "NO_DISCUSSION", "NO_SELECTION", "BASELINE"]:
-            seed_data = store[model][cond]
-            if not seed_data:
-                continue
-            arr  = np.array(list(seed_data.values()), dtype=float)
-            mean = np.nanmean(arr, axis=0)
-            se   = np.nanstd(arr, axis=0) / np.sqrt(np.sum(~np.isnan(arr), axis=0))
-            ax.plot(rounds, mean, color=COND_COLORS[cond], linewidth=2,
-                    label=COND_LABELS[cond])
-            ax.fill_between(rounds, mean - se, mean + se,
-                            color=COND_COLORS[cond], alpha=0.15)
-
-        ax.set_title(MODEL_LABELS[model], fontsize=LABEL_SIZE, fontweight="bold")
-        ax.set_xlabel("Round", fontsize=TICK_SIZE)
-        ax.set_ylim(0, 1)
-        ax.xaxis.set_major_locator(ticker.MultipleLocator(5))
-        ax.tick_params(labelsize=TICK_SIZE)
-        ax.grid(True, alpha=0.2)
-        if ax == axes[0]:
-            ax.set_ylabel("Mean Cooperation Tendency", fontsize=LABEL_SIZE)
-            ax.legend(fontsize=LEGEND_SIZE, loc="lower right")
-
-    fig.suptitle("Cooperation Tendency Over Rounds — Local Variant",
-                 fontsize=LABEL_SIZE + 2, y=1.01)
-    plt.tight_layout()
-
-    out = os.path.join(FIG_ROOT, "cross_model", "ct_trajectories_local.pdf")
-    fig.savefig(out, bbox_inches="tight")
-    fig.savefig(out.replace(".pdf", ".png"), dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"  Saved: ct_trajectories_local.png/.pdf")
-
-
-def run_ct_plots():
-    print("=" * 60)
-    print("COOPERATION TENDENCY — local variant")
-    print("=" * 60)
-    store = build_ct_store()
-    plot_ct_trajectories(store)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -452,7 +370,6 @@ def run_per_seed_plots():
 
     import temp_evals_behavior as teb
 
-    teb.VARIANTS = ["local"]
     teb.FIG_ROOT = FIG_ROOT
     teb.SEEDS    = SEEDS
     teb.MODELS   = MODELS
@@ -463,63 +380,35 @@ def run_per_seed_plots():
     print(f"  Saved to {FIG_ROOT}/{{model}}/behavioral_analysis/")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 6. NETWORK DEVELOPMENT (temp_eval_network)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def run_network_plots():
-    print("=" * 60)
-    print("NETWORK DEVELOPMENT — local variant")
-    print("=" * 60)
-
-    import temp_eval_network as ten
-
-    ten.VARIANT  = "local"
-    ten.FIG_ROOT = FIG_ROOT
-    ten.SEEDS    = SEEDS
-    ten.MODELS   = MODELS
-
-    store = ten.build_store()
-    for model in MODELS:
-        for cond in ["FULL", "NO_DISCUSSION"]:
-            n = len(store[model].get(cond, {}))
-            print(f"  {MODEL_LABELS[model]} / {cond}: {n} seeds")
-
-    ten.plot_per_model(store)
-    ten.plot_across_models(store)
-    ten.plot_across_models_horizontal(store)
-    print(f"  Saved to {FIG_ROOT}/cross_model/ and per-model selection_analysis/")
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 7. PERCEPTION-ACTION GAP (temp_eval_alignment2)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_alignment_plots():
+    """Superseded 2026-08-24 by perception_action_gap_plot.py (item b of the
+    perception/alignment consolidation) -- run as a subprocess since that
+    script is tier-parametrized via --tier rather than monkeypatched
+    globals. Publishes straight to figures/MAIN_RESULTS/5_perception_action_gap_evolution/."""
     print("=" * 60)
-    print("PERCEPTION-ACTION GAP — local variant")
+    print("PERCEPTION-ACTION GAP (perception_action_gap_plot.py) — 7b tier")
     print("=" * 60)
 
-    import temp_eval_alignment2 as tea
-
-    tea.VARIANT  = "local"
-    tea.FIG_ROOT = FIG_ROOT
-    tea.SEEDS    = SEEDS
-    tea.MODELS   = MODELS
-
-    store = tea.build_store()
-    for model in MODELS:
-        for cond in ["FULL", "BASELINE"]:
-            n = len(store[model].get(cond, {}))
-            print(f"  {MODEL_LABELS[model]} / {cond}: {n} seeds")
-
-    tea.plot_per_model(store)
-    tea.plot_across_models(store)
-    print(f"  Saved to {FIG_ROOT}/cross_model/ and per-model alignment_analysis/")
+    script_path = os.path.join(ANALYSIS_DIR, "alignment", "perception_action_gap_plot.py")
+    result = subprocess.run([sys.executable, script_path, "--tier", "7b"],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"  [WARN] perception_action_gap_plot.py exited with code {result.returncode}")
+        if result.stderr:
+            print(result.stderr[-1000:])
+    else:
+        lines = [l for l in result.stdout.splitlines() if l.strip()]
+        for l in lines[-10:]:
+            print(f"    {l}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 8. STATS — behavior_quantified + perception_quantified via subprocess
+# 8. STATS — behavior_quantified via subprocess
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_stats():
@@ -530,14 +419,16 @@ def run_stats():
     stats_out = os.path.join(FIG_ROOT, "paper_stats")
     os.makedirs(stats_out, exist_ok=True)
 
+    # behavior_quantified.py's Q1/Q2 tables are the paper's canonical
+    # pairwise-OLS+Wald result -- write directly to MAIN_RESULTS instead of
+    # a scratch dir that then needs manually copying over.
+    main_pairwise_out = "/data3/rasimura/social-norm-evo/figures/MAIN_RESULTS/2_pairwise_ols_wald/main"
+    os.makedirs(main_pairwise_out, exist_ok=True)
+
     scripts = [
         (
             "behavior_quantified.py",
-            ["--variant", "local", "--out-dir", stats_out],
-        ),
-        (
-            "perception_quantified.py",
-            ["--variant", "local", "--fig-root", FIG_ROOT],
+            ["--variant", "local", "--out-dir", main_pairwise_out],
         ),
     ]
 
@@ -557,6 +448,31 @@ def run_stats():
                 print(f"    {l}")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 9. SUPPORTING RESULTS — mixed-effects level/slope tests (behavioral_statistical)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def run_behavioral_statistical():
+    print("=" * 60)
+    print("BEHAVIORAL STATISTICAL TESTS (mixed effects, level/slope) — 7B/8B")
+    print("=" * 60)
+    for _p in [ANALYSIS_DIR] + [
+        os.path.join(ANALYSIS_DIR, d) for d in os.listdir(ANALYSIS_DIR)
+        if os.path.isdir(os.path.join(ANALYSIS_DIR, d)) and not d.startswith((".", "__"))
+    ]:
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
+    import behavioral_statistical as bs
+    bs.MODELS   = ["gpt", "llama", "mistral", "qwen"]
+    bs.LABELS   = {"gpt": "GPT", "llama": "Llama", "mistral": "Mistral", "qwen": "Qwen"}
+    bs.FAMILIES = ["GPT", "Llama", "Mistral", "Qwen"]
+    bs.REF_FAM  = "Mistral"
+    bs.RESULTS  = "/data3/rasimura/social-norm-evo/results"
+    bs.VARIANT  = "local"
+    bs.FIG_ROOT = "/data3/rasimura/social-norm-evo/figures/SUPPORTING_MAIN_RESULTS/behavioral_mixed_effects_7b"
+    bs.main()
+
+
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -564,9 +480,8 @@ if __name__ == "__main__":
     run_stability()
     run_contribution_plots()
     run_all_models_plots()
-    run_ct_plots()
     run_per_seed_plots()
-    run_network_plots()
     run_alignment_plots()
     run_stats()
+    run_behavioral_statistical()
     print(f"\nAll outputs → {FIG_ROOT}")
